@@ -7,7 +7,9 @@
   },
   "scripts": {
     "dev": "concurrently -n backend,web,electron -c blue,green,magenta \"npm run dev -w apps/backend\" \"npm run dev -w apps/web\" \"npm run dev -w apps/desktop\"",
-    "build": "npm run build -ws",
+    "build": "npm run build:packages && npm run build:apps",
+    "build:packages": "npm run build -w packages/shared && npm run build -w packages/db-mongo && npm run build -w packages/db-postgres && npm run build -w packages/rag",
+    "build:apps": "npm run build -w apps/backend && npm run build -w apps/web && npm run build -w apps/desktop",
     "lint": "npm run lint -ws",
     "typecheck": "npm run typecheck -ws",
     "db:pg:migrate": "npm run db:migrate -w packages/db-postgres",
