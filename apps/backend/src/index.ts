@@ -7,6 +7,7 @@ import { config } from "./config.js";
 import { log } from "./log.js";
 import { registerIngestRoutes } from "./routes/ingest.js";
 import { registerQueryRoutes } from "./routes/query.js";
+import { registerChatRoutes } from "./routes/chat.js";
 import { startWorkers } from "./workers/index.js";
 import { startMcpServer } from "./mcp/server.js";
 
@@ -27,6 +28,7 @@ async function main() {
 
   await registerIngestRoutes(app);
   await registerQueryRoutes(app);
+  await registerChatRoutes(app);
 
   await startWorkers({ logger: app.log });
   await startMcpServer({ logger: app.log });

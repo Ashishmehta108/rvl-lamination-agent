@@ -2,11 +2,18 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": "../..",
     "types": ["node"],
     "declaration": false,
-    "sourceMap": true
+    "sourceMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@rvl/shared": ["../../packages/shared/src/index.ts"],
+      "@rvl/db-mongo": ["../../packages/db-mongo/src/index.ts"],
+      "@rvl/db-postgres": ["../../packages/db-postgres/src/index.ts"],
+      "@rvl/rag": ["../../packages/rag/src/index.ts"]
+    }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "../../packages/*/src/**/*.ts"]
 }
 

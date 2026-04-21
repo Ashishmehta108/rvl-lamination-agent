@@ -17,9 +17,6 @@ export async function startReportScheduler(boss: PgBoss, logger: Logger) {
       // node-cron can check if cron matches "now"
       const now = new Date();
       if (!cron.validate(s.cron)) continue;
-      if (!cron.schedule(s.cron, () => {}).getStatus) {
-        // no-op (type compat)
-      }
 
       // Lightweight guard: only run once per hour per schedule unless lastRunAt is older.
       if (s.lastRunAt && now.getTime() - s.lastRunAt.getTime() < 60 * 60 * 1000) continue;

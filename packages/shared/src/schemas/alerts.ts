@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AlertStatus, Severity } from "../types.js";
+import type { AlertStatus, Severity } from "../types.js";
 
 export const SeveritySchema = z.custom<Severity>((v) =>
   v === "info" || v === "warning" || v === "critical"

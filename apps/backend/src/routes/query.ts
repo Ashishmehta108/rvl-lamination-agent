@@ -3,6 +3,7 @@ import { requireApiAuth } from "../auth.js";
 import { getMongoClient } from "@rvl/db-mongo";
 import { getPgDb, schema } from "@rvl/db-postgres";
 import { desc, eq, and } from "drizzle-orm";
+import { newId } from "@rvl/shared";
 
 export async function registerQueryRoutes(app: FastifyInstance) {
   app.get("/tags/latest", async (req, reply) => {
@@ -39,6 +40,35 @@ export async function registerQueryRoutes(app: FastifyInstance) {
       .orderBy(desc(schema.reportRuns.createdAt))
       .limit(100);
     return reply.send({ items });
+  });
+
+  app.post("/reports/seed-defaults", async (req, reply) => {
+    requireApiAuth(req);
+    const machineId = String((req.body as any)?.machineId ?? (req.query as any)?.machineId ?? "");
+    if (!machineId) return reply.code(400).send({ error: "machineId_required" });
+    const db = getPgDb();
+
+    const templateId = newId("template");
+    await db.insert(schema.reportTemplates).values({
+      id: templateId,
+      name: "Daily Alerts Summary",
+      description: "Last 24h alert summary",
+      format: "html",
+      definition: { kind: "alerts_summary", window: "24h" }
+    });
+
+    const scheduleId = newId("schedule");
+    await db.insert(schema.reportSchedules).values({
+      id: scheduleId,
+      templateId,
+      machineId,
+      timezone: "UTC",
+      cron: "0 8 * * *", // 08:00 UTC daily
+      enabled: true,
+      deliveryTargets: { emails: [] }
+    });
+
+    return reply.send({ ok: true, templateId, scheduleId });
   });
 }
 

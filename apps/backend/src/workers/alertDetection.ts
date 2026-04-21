@@ -1,5 +1,5 @@
 import type PgBoss from "pg-boss";
-import type { Logger } from "pino";
+import type { BaseLogger } from "pino";
 import { getMongoClient } from "@rvl/db-mongo";
 import { getPgDb, schema } from "@rvl/db-postgres";
 import { newId } from "@rvl/shared";
@@ -16,11 +16,14 @@ function computeSeverity(kind: "warn" | "alarm") {
   return kind === "alarm" ? "critical" : "warning";
 }
 
-export async function registerAlertDetectionWorker(boss: PgBoss, logger: Logger) {
-  await boss.work<TagUpdatedPayload>(Jobs.tagUpdated, { teamSize: 1, teamConcurrency: 10 }, async (job) => {
-    const { machineId, machineRevision, tagId, ts } = job.data;
-    const prisma = getMongoClient();
-    const db = getPgDb();
+export async function registerAlertDetectionWorker(boss: PgBoss, logger: BaseLogger) {
+  await boss.work<TagUpdatedPayload>(
+    Jobs.tagUpdated,
+    { teamConcurrency: 10 } as any,
+    async (job: any) => {
+      const { machineId, machineRevision, tagId, ts } = job.data as TagUpdatedPayload;
+      const prisma = getMongoClient();
+      const db = getPgDb();
 
     const def = await prisma.tagDefinition.findUnique({
       where: { id: `${machineId}:${machineRevision}:${tagId}` }
@@ -107,6 +110,7 @@ export async function registerAlertDetectionWorker(boss: PgBoss, logger: Logger)
       // Unique violation => existing open alert with same dedupeKey already exists.
       logger.debug({ err: String(err) }, "alert deduped/ignored");
     }
-  });
+    }
+  );
 }
 

@@ -1,6 +1,9 @@
-import type { Logger } from "pino";
+import type { BaseLogger } from "pino";
 import { getMongoClient } from "@rvl/db-mongo";
-import { IngestBatch, IngestResponse, newId } from "@rvl/shared";
+import { newId } from "@rvl/shared";
+import type { IngestBatch, IngestResponse } from "@rvl/shared";
+import { tryGetBoss } from "../queue/boss.js";
+import { Jobs } from "../workers/jobs.js";
 
 type CleanQuality = "good" | "bad";
 
@@ -76,8 +79,9 @@ function numericQualityChecks(args: {
   return { quality, reasons };
 }
 
-export async function cleanAndPersistBatch(batch: IngestBatch, logger: Logger): Promise<IngestResponse> {
+export async function cleanAndPersistBatch(batch: IngestBatch, logger: any): Promise<IngestResponse> {
   const prisma = getMongoClient();
+  const boss = await tryGetBoss();
 
   let accepted = 0;
   let rejected = 0;
@@ -290,6 +294,15 @@ export async function cleanAndPersistBatch(batch: IngestBatch, logger: Logger): 
         create: latestCreate,
         update: latestUpdate
       });
+
+      if (boss) {
+        await boss.send(Jobs.tagUpdated, {
+          machineId: batch.machineId,
+          machineRevision: batch.machineRevision,
+          tagId,
+          ts: ts.toISOString()
+        });
+      }
 
       accepted++;
       perTag.push({

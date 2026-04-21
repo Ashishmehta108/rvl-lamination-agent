@@ -1,5 +1,6 @@
 "use client";
 
+import type { ChangeEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -26,7 +27,7 @@ export default function HomePage() {
       const res = await fetch(`${API}/tags/latest?machineId=${encodeURIComponent(machineId)}`, {
         headers: { Authorization: `Bearer ${TOKEN}` }
       });
-      const json = await res.json();
+      const json = (await res.json()) as { items?: TagLatest[] };
       if (!cancelled) setItems(json.items ?? []);
     }
     load().catch(() => setItems([]));
@@ -63,7 +64,7 @@ export default function HomePage() {
             <input
               className="rounded-md border border-[#1f2a36] bg-[#0f1720] px-3 py-2 text-sm outline-none"
               value={machineId}
-              onChange={(e) => setMachineId(e.target.value)}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setMachineId(e.currentTarget.value)}
             />
           </div>
         </div>

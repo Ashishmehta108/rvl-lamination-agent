@@ -1,5 +1,5 @@
 import type PgBoss from "pg-boss";
-import type { Logger } from "pino";
+import type { BaseLogger } from "pino";
 import nodemailer from "nodemailer";
 import { getPgDb, schema } from "@rvl/db-postgres";
 import { eq } from "drizzle-orm";
@@ -28,10 +28,10 @@ function getTransport() {
   });
 }
 
-export async function registerDeliveryWorker(boss: PgBoss, logger: Logger) {
-  await boss.work<DeliverPayload>(Jobs.alertDeliver, { teamSize: 1, teamConcurrency: 5 }, async (job) => {
+export async function registerDeliveryWorker(boss: PgBoss, logger: BaseLogger) {
+  await boss.work<DeliverPayload>(Jobs.alertDeliver, { teamConcurrency: 5 } as any, async (job: any) => {
     const db = getPgDb();
-    const deliveryId = job.data.deliveryId;
+    const deliveryId = (job.data as DeliverPayload).deliveryId;
 
     const [delivery] = await db.select().from(schema.alertDeliveries).where(eq(schema.alertDeliveries.id, deliveryId));
     if (!delivery) return;

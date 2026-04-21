@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ReportFormat } from "../types.js";
+import type { ReportFormat } from "../types.js";
 
 export const ReportFormatSchema = z.custom<ReportFormat>((v) => v === "html" || v === "json");
 

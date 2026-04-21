@@ -1,5 +1,5 @@
 import type PgBoss from "pg-boss";
-import type { Logger } from "pino";
+import type { BaseLogger } from "pino";
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -17,10 +17,10 @@ type ReportRunPayload = {
   windowEnd: string;
 };
 
-export async function registerReportRunner(boss: PgBoss, logger: Logger) {
-  await boss.work<ReportRunPayload>(Jobs.reportRun, { teamSize: 1, teamConcurrency: 2 }, async (job) => {
+export async function registerReportRunner(boss: PgBoss, logger: BaseLogger) {
+  await boss.work<ReportRunPayload>(Jobs.reportRun, { teamConcurrency: 2 } as any, async (job: any) => {
     const db = getPgDb();
-    const payload = job.data;
+    const payload = job.data as ReportRunPayload;
 
     const runId = newId("run");
     const windowStart = new Date(payload.windowStart);
