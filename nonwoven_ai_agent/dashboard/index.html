@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nonwoven Machine — AI Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e;
+    --green: #3fb950; --yellow: #d29922; --red: #f85149; --blue: #58a6ff;
+    --orange: #ff9500;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 24px; border-bottom: 1px solid var(--border);
+    background: var(--card);
+  }
+  header h1 { font-size: 1.1rem; font-weight: 600; }
+  #status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); display: inline-block; margin-right: 6px; }
+  #status-dot.online  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  #status-dot.offline { background: var(--red); }
+  #clock { color: var(--muted); font-size: 0.85rem; }
+
+  .grid { display: grid; gap: 12px; padding: 16px; }
+  .g2 { grid-template-columns: repeat(2, 1fr); }
+  .g3 { grid-template-columns: repeat(3, 1fr); }
+  .g4 { grid-template-columns: repeat(4, 1fr); }
+  @media(max-width:768px){ .g4,.g3,.g2 { grid-template-columns: repeat(2,1fr); } }
+  @media(max-width:480px){ .g4,.g3,.g2 { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px;
+  }
+  .card-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 6px; }
+  .card-value { font-size: 2rem; font-weight: 700; }
+  .card-unit  { font-size: 0.85rem; color: var(--muted); margin-left: 4px; }
+  .card-sub   { font-size: 0.78rem; color: var(--muted); margin-top: 4px; }
+
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 0.72rem; font-weight: 600;
+  }
+  .badge.on  { background: #1a3a1a; color: var(--green); border: 1px solid var(--green); }
+  .badge.off { background: #3a1a1a; color: var(--red);   border: 1px solid var(--red); }
+  .badge.warn{ background: #3a2a00; color: var(--yellow); border: 1px solid var(--yellow); }
+
+  .section-title {
+    font-size: 0.8rem; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); padding: 4px 16px 0;
+  }
+
+  /* Alert panel */
+  #alert-panel { max-height: 260px; overflow-y: auto; }
+  .alert-row {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 0.82rem;
+  }
+  .alert-row:last-child { border-bottom: none; }
+  .alert-level {
+    padding: 1px 7px; border-radius: 4px; font-size: 0.7rem; font-weight: 700;
+    white-space: nowrap; margin-top: 1px;
+  }
+  .lvl-CRITICAL { background:#5a0000; color:#ff6b6b; }
+  .lvl-ALARM    { background:#4a1500; color:#ff9500; }
+  .lvl-WARNING  { background:#3a2a00; color:#ffd700; }
+  .lvl-ANOMALY  { background:#001a3a; color:#58a6ff; }
+  .lvl-FAULT    { background:#3a003a; color:#da70d6; }
+  .alert-msg  { flex: 1; }
+  .alert-time { color: var(--muted); font-size: 0.72rem; white-space: nowrap; }
+
+  /* Chart */
+  .chart-wrap { position: relative; height: 160px; }
+
+  /* Gauge bar */
+  .gauge-bar { height: 6px; background: var(--border); border-radius: 3px; margin-top: 8px; overflow: hidden; }
+  .gauge-fill { height: 100%; border-radius: 3px; transition: width .4s, background .4s; }
+
+  .no-alerts { color: var(--muted); font-size: 0.85rem; padding: 12px 0; text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <span id="status-dot"></span>
+    <span id="conn-label">Connecting…</span>
+    &nbsp;|&nbsp;
+    <strong>Nonwoven Lamination Machine</strong> — AI Monitor
+  </div>
+  <div id="clock">--:--:--</div>
+</header>
+
+<!-- KPI Row -->
+<div class="grid g4" id="kpi-row" style="padding-bottom:4px">
+  <div class="card" id="kpi-meter">
+    <div class="card-title">Running Meter</div>
+    <div><span class="card-value" id="v-meter">--</span><span class="card-unit">m</span></div>
+    <div class="card-sub">Total: <span id="v-total">--</span> m</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Line Speed</div>
+    <div><span class="card-value" id="v-mpm">--</span><span class="card-unit">m/min</span></div>
+    <div class="card-sub">Master: <span id="v-master">--</span>%</div>
+  </div>
+  <div class="card">
+    <div class="card-title">GSM</div>
+    <div><span class="card-value" id="v-gsm">--</span><span class="card-unit">g/m²</span></div>
+    <div class="card-sub">&nbsp;</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Active Alerts</div>
+    <div><span class="card-value" id="v-alerts" style="color:var(--green)">0</span></div>
+    <div class="card-sub" id="v-alarm-status">All systems normal</div>
+  </div>
+</div>
+
+<!-- Extruder / Laminator / Winder -->
+<p class="section-title">Drives</p>
+<div class="grid g3">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div class="card-title">EXTRUDER</div>
+      <span class="badge off" id="b-ext">--</span>
+    </div>
+    <div style="display:flex;gap:24px;margin-top:8px">
+      <div>
+        <div class="card-sub">RPM</div>
+        <div style="font-size:1.5rem;font-weight:700" id="v-erpm">--</div>
+      </div>
+      <div>
+        <div class="card-sub">Amps</div>
+        <div style="font-size:1.5rem;font-weight:700" id="v-eamp">--</div>
+      </div>
+      <div>
+        <div class="card-sub">Speed</div>
+        <div style="font-size:1.5rem;font-weight:700" id="v-espd">--%</div>
+      </div>
+    </div>
+    <div class="gauge-bar"><div class="gauge-fill" id="g-eamp" style="width:0%;background:var(--green)"></div></div>
+    <div class="card-sub" style="margin-top:3px">Amp load</div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div class="card-title">LAMINATOR</div>
+      <span class="badge off" id="b-lam">--</span>
+    </div>
+    <div style="display:flex;gap:24px;margin-top:8px">
+      <div>
+        <div class="card-sub">m/min</div>
+        <div style="font-size:1.5rem;font-weight:700" id="v-lmpm">--</div>
+      </div>
+      <div>
+        <div class="card-sub">Amps</div>
+        <div style="font-size:1.5rem;font-weight:700" id="v-lamp">--</div>
+      </div>
+      <div>
+        <div class="card-sub">Speed</div>
+        <div style="font-size:1.5rem;font-weight:700" id="v-lspd">--%</div>
+      </div>
+    </div>
+    <div class="gauge-bar"><div class="gauge-fill" id="g-lamp" style="width:0%;background:var(--green)"></div></div>
+    <div class="card-sub" style="margin-top:3px">Amp load</div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div class="card-title">WINDER</div>
+      <span class="badge off" id="b-win">--</span>
+    </div>
+    <div style="display:flex;gap:24px;margin-top:8px">
+      <div>
+        <div class="card-sub">Amps</div>
+        <div style="font-size:1.5rem;font-weight:700" id="v-wamp">--</div>
+      </div>
+      <div>
+        <div class="card-sub">Tension %</div>
+        <div style="font-size:1.5rem;font-weight:700" id="v-wten">--</div>
+      </div>
+    </div>
+    <div class="gauge-bar"><div class="gauge-fill" id="g-wamp" style="width:0%;background:var(--green)"></div></div>
+    <div class="card-sub" style="margin-top:3px">Amp load</div>
+  </div>
+</div>
+
+<!-- Charts -->
+<p class="section-title" style="margin-top:4px">Trends (last 60 readings)</p>
+<div class="grid g2">
+  <div class="card">
+    <div class="card-title">Extruder RPM &amp; Laminator m/min</div>
+    <div class="chart-wrap"><canvas id="chart-speed"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Amps — Extruder / Laminator / Winder</div>
+    <div class="chart-wrap"><canvas id="chart-amps"></canvas></div>
+  </div>
+</div>
+
+<!-- Alerts -->
+<p class="section-title" style="margin-top:4px">AI Alert Log</p>
+<div class="grid" style="grid-template-columns:1fr">
+  <div class="card">
+    <div id="alert-panel"><p class="no-alerts">No alerts yet — machine running normally ✅</p></div>
+  </div>
+</div>
+
+<script>
+const API = "";
+const MAX_PTS = 60;
+
+let speedChart, ampsChart;
+const speedData = { labels:[], ext:[], lam:[] };
+const ampsData  = { labels:[], ext:[], lam:[], win:[] };
+
+function mkChart(id, datasets, yLabel) {
+  return new Chart(document.getElementById(id).getContext("2d"), {
+    type: "line",
+    data: { labels: speedData.labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: { legend: { labels: { color: "#8b949e", boxWidth: 12, font:{size:11} } } },
+      scales: {
+        x: { ticks: { color:"#8b949e", maxTicksLimit:6, font:{size:10} }, grid:{color:"#21262d"} },
+        y: { ticks: { color:"#8b949e", font:{size:10} }, grid:{color:"#21262d"}, title:{display:true,text:yLabel,color:"#8b949e",font:{size:10}} }
+      }
+    }
+  });
+}
+
+function initCharts() {
+  speedChart = mkChart("chart-speed", [
+    { label:"Extruder RPM", data: speedData.ext, borderColor:"#58a6ff", backgroundColor:"transparent", tension:.3, pointRadius:0, borderWidth:1.5 },
+    { label:"Laminator m/min", data: speedData.lam, borderColor:"#3fb950", backgroundColor:"transparent", tension:.3, pointRadius:0, borderWidth:1.5 },
+  ], "Value");
+  ampsChart = mkChart("chart-amps", [
+    { label:"Extruder A", data: ampsData.ext, borderColor:"#ff9500", backgroundColor:"transparent", tension:.3, pointRadius:0, borderWidth:1.5 },
+    { label:"Laminator A", data: ampsData.lam, borderColor:"#da70d6", backgroundColor:"transparent", tension:.3, pointRadius:0, borderWidth:1.5 },
+    { label:"Winder A",    data: ampsData.win, borderColor:"#f85149", backgroundColor:"transparent", tension:.3, pointRadius:0, borderWidth:1.5 },
+  ], "Amps");
+}
+
+function push(arr, val) { arr.push(val ?? null); if(arr.length > MAX_PTS) arr.shift(); }
+
+function gauge(id, val, max, warnPct=70, alarmPct=90) {
+  const el = document.getElementById(id);
+  if (!el || val==null) return;
+  const pct = Math.min(100, (val/max)*100);
+  el.style.width = pct + "%";
+  el.style.background = pct >= alarmPct ? "var(--red)" : pct >= warnPct ? "var(--yellow)" : "var(--green)";
+}
+
+function badge(id, on) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = on ? "ON" : "OFF";
+  el.className = "badge " + (on ? "on" : "off");
+}
+
+function fmt(v, dp=1) { return v==null ? "--" : (+v).toFixed(dp); }
+
+async function fetchLive() {
+  try {
+    const r = await fetch(API + "/api/live");
+    if (!r.ok) throw new Error();
+    const d = await r.json();
+    const t = d.tags || {};
+    const ts = new Date(d.timestamp).toLocaleTimeString();
+
+    document.getElementById("status-dot").className = "online";
+    document.getElementById("conn-label").textContent = "LIVE";
+
+    // KPIs
+    document.getElementById("v-meter").textContent  = fmt(t.RUNNING_METER?.value, 1);
+    document.getElementById("v-total").textContent  = fmt(t.TOTAL_METER?.value, 1);
+    document.getElementById("v-mpm").textContent    = fmt(t.LAMINATOR_MPM?.value, 1);
+    document.getElementById("v-master").textContent = fmt(t.MASTER_SPEED_PCT?.value, 0);
+    document.getElementById("v-gsm").textContent    = fmt(t.GSM_ENTRY?.value, 1);
+
+    // Extruder
+    document.getElementById("v-erpm").textContent = fmt(t.EXTRUDER_RPM?.value, 1);
+    document.getElementById("v-eamp").textContent = fmt(t.EXTRUDER_AMP?.value, 1);
+    document.getElementById("v-espd").textContent = fmt(t.EXTRUDER_SPEED_PCT?.value, 0) + "%";
+    badge("b-ext", t.EXTRUDER_ON_OFF?.value);
+    gauge("g-eamp", t.EXTRUDER_AMP?.value, 40);
+
+    // Laminator
+    document.getElementById("v-lmpm").textContent = fmt(t.LAMINATOR_MPM?.value, 1);
+    document.getElementById("v-lamp").textContent = fmt(t.LAMINATOR_AMP?.value, 1);
+    document.getElementById("v-lspd").textContent = fmt(t.LAMINATOR_SPEED_PCT?.value, 0) + "%";
+    badge("b-lam", t.LAMINATOR_ON_OFF?.value);
+    gauge("g-lamp", t.LAMINATOR_AMP?.value, 15);
+
+    // Winder
+    document.getElementById("v-wamp").textContent = fmt(t.WINDER_AMP?.value, 1);
+    document.getElementById("v-wten").textContent = fmt(t.WINDER_TENSION_PCT?.value, 0);
+    badge("b-win", t.WINDER_ON_OFF?.value);
+    gauge("g-wamp", t.WINDER_AMP?.value, 12);
+
+    // Charts
+    push(speedData.labels, ts);
+    push(speedData.ext, t.EXTRUDER_RPM?.value);
+    push(speedData.lam, t.LAMINATOR_MPM?.value);
+    push(ampsData.labels, ts);
+    push(ampsData.ext, t.EXTRUDER_AMP?.value);
+    push(ampsData.lam, t.LAMINATOR_AMP?.value);
+    push(ampsData.win, t.WINDER_AMP?.value);
+    speedChart.update(); ampsChart.update();
+
+  } catch(e) {
+    document.getElementById("status-dot").className = "offline";
+    document.getElementById("conn-label").textContent = "OFFLINE";
+  }
+}
+
+async function fetchAlerts() {
+  try {
+    const r = await fetch(API + "/api/alerts");
+    const alerts = await r.json();
+    const panel = document.getElementById("alert-panel");
+    const countEl = document.getElementById("v-alerts");
+    const statusEl = document.getElementById("v-alarm-status");
+
+    countEl.textContent = alerts.length;
+    countEl.style.color = alerts.length > 0 ? "var(--red)" : "var(--green)";
+    statusEl.textContent = alerts.length > 0 ? "⚠ Alerts active" : "All systems normal ✅";
+
+    if (alerts.length === 0) {
+      panel.innerHTML = '<p class="no-alerts">No alerts yet — machine running normally ✅</p>';
+      return;
+    }
+    panel.innerHTML = alerts.slice(0, 50).map(a => `
+      <div class="alert-row">
+        <span class="alert-level lvl-${a.level}">${a.level}</span>
+        <span class="alert-msg"><strong>${a.label}</strong> — ${a.message}</span>
+        <span class="alert-time">${new Date(a.timestamp).toLocaleTimeString()}</span>
+      </div>`).join("");
+  } catch(e) {}
+}
+
+// Clock
+setInterval(() => {
+  document.getElementById("clock").textContent = new Date().toLocaleTimeString();
+}, 1000);
+
+initCharts();
+fetchLive();   setInterval(fetchLive,   2000);
+fetchAlerts(); setInterval(fetchAlerts, 3000);
+</script>
+</body>
+</html>

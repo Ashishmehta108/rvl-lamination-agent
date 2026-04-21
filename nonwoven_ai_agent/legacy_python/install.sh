@@ -1,0 +1,15 @@
+#!/bin/bash
+echo "=== Nonwoven AI Agent — Installer ==="
+echo "Installing Python dependencies..."
+pip3 install pymodbus flask --break-system-packages
+echo ""
+echo "=== Done! ==="
+echo ""
+echo "To start the AI Agent:"
+echo "  cd nonwoven_ai_agent"
+echo "  python3 ai_agent.py"
+echo ""
+echo "Then open your browser (on any device on the factory WiFi):"
+echo "  http://<raspberry-pi-ip>:5000"
+echo ""
+echo "To find your Raspberry Pi IP: run 'hostname -I'"

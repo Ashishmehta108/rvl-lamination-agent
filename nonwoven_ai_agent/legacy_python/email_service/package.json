@@ -1,0 +1,16 @@
+{
+  "name": "nonwoven-email-service",
+  "version": "1.0.0",
+  "description": "Nodemailer email microservice for Nonwoven AI Agent — sends alert and report emails",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "nodemailer": "^6.10.1",
+    "dotenv": "^16.5.0",
+    "cors": "^2.8.5"
+  }
+}
