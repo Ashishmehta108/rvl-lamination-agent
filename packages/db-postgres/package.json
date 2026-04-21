@@ -1,0 +1,33 @@
+{
+  "name": "@rvl/db-postgres",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "db:migrate": "drizzle-kit migrate",
+    "db:generate": "drizzle-kit generate",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.44.2",
+    "pg": "^8.13.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "@types/pg": "^8.11.14",
+    "drizzle-kit": "^0.31.4",
+    "eslint": "^9.26.0",
+    "typescript": "^5.8.3"
+  }
+}
+

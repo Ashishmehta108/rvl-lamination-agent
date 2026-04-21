@@ -1,0 +1,30 @@
+{
+  "name": "@rvl/db-mongo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "prisma:generate": "prisma generate",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@prisma/client": "^6.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "eslint": "^9.26.0",
+    "prisma": "^6.6.0",
+    "typescript": "^5.8.3"
+  }
+}
+
