@@ -9,10 +9,9 @@ import { registerIngestRoutes } from "./routes/ingest.js";
 import { registerQueryRoutes } from "./routes/query.js";
 import { registerChatRoutes } from "./routes/chat.js";
 import { startWorkers } from "./workers/index.js";
-import { startMcpServer } from "./mcp/server.js";
 
 async function main() {
-  const app = Fastify({ logger: log });
+  const app = Fastify({ loggerInstance: log });
 
   await app.register(helmet);
   if (config.enableCors) {
@@ -26,12 +25,11 @@ async function main() {
 
   app.get("/health", async () => ({ ok: true, service: "backend", time: new Date().toISOString() }));
 
-  await registerIngestRoutes(app);
-  await registerQueryRoutes(app);
-  await registerChatRoutes(app);
+  await registerIngestRoutes(app as any);
+  await registerQueryRoutes(app as any);
+  await registerChatRoutes(app as any);
 
   await startWorkers({ logger: app.log });
-  await startMcpServer({ logger: app.log });
 
   await app.listen({ port: config.port, host: "127.0.0.1" });
   app.log.info({ port: config.port }, "backend listening");

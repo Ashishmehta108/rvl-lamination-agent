@@ -1,13 +1,13 @@
-import type { BaseLogger } from "pino";
+
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { config } from "../config.js";
+
 import { getMongoClient } from "@rvl/db-mongo";
 import { getPgDb, schema } from "@rvl/db-postgres";
 import { desc, eq } from "drizzle-orm";
 
-export async function startMcpServer({ logger }: { logger: any }) {
+export async function startMcpServer() {
   const server = new McpServer(
     { name: "rvl-lamination-agent", version: "0.1.0" },
     { capabilities: { tools: {} } }
@@ -58,6 +58,6 @@ export async function startMcpServer({ logger }: { logger: any }) {
   // Claude Desktop will spawn this command.
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  logger.info({ tokenHint: config.mcpAuthToken ? "set" : "missing" }, "mcp server connected (stdio)");
+  // logger.info({ tokenHint: config.mcpAuthToken ? "set" : "missing" }, "mcp server connected (stdio)");
 }
 
