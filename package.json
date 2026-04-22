@@ -1,7 +1,10 @@
 {
   "name": "rvl-lamination-agent",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "engines": {
     "node": ">=20"
   },
@@ -20,8 +23,8 @@
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
+    "dotenv": "^17.4.2",
     "pm2": "^6.0.10",
     "typescript": "^5.8.3"
   }
 }
-

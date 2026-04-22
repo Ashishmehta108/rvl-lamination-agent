@@ -1,4 +1,10 @@
 import process from "node:process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { config as dotenvConfig } from "dotenv";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenvConfig({ path: path.resolve(__dirname, "../../../.env") });
 
 function getEnv(key: string, defaultValue?: string): string {
   const v = process.env[key];
