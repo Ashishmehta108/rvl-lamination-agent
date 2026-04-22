@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider   = "prisma-client-js"
+  engineType = "library"
 }
 
 datasource db {
@@ -8,69 +9,69 @@ datasource db {
 }
 
 model Tag {
-  id          String   @id @map("_id")
-  tenantId    String?
-  slug        String
-  name        String
-  description String?
-  unit        String?
-  dataType    String   @default("number")
-  aliases     String[]
-  parentId    String?
-  department  String?
+  id            String    @id @map("_id")
+  tenantId      String?
+  slug          String
+  name          String
+  description   String?
+  unit          String?
+  dataType      String    @default("number")
+  aliases       String[]
+  parentId      String?
+  department    String?
   engineerEmail String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  archivedAt  DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  archivedAt    DateTime?
 
   @@index([tenantId, slug])
   @@index([tenantId, name])
 }
 
 model MachineProfile {
-  id            String   @id @map("_id")
-  machineId     String
+  id              String   @id @map("_id")
+  machineId       String
   machineRevision String
-  name          String?
-  createdAt     DateTime @default(now())
+  name            String?
+  createdAt       DateTime @default(now())
 
   @@index([machineId, machineRevision])
 }
 
 model MachineIngestState {
-  id            String   @id @map("_id")
-  machineId     String
+  id              String    @id @map("_id")
+  machineId       String
   machineRevision String
-  lastSeq       Int      @default(0)
-  lastSentAt    DateTime?
-  updatedAt     DateTime @updatedAt
+  lastSeq         Int       @default(0)
+  lastSentAt      DateTime?
+  updatedAt       DateTime  @updatedAt
 
   @@index([machineId, machineRevision])
 }
 
 model TagDefinition {
-  id            String   @id @map("_id")
-  machineId     String
+  id              String   @id @map("_id")
+  machineId       String
   machineRevision String
-  tagId         String
-  slug          String
-  name          String
-  unit          String?
-  dataType      String   @default("number")
-  deadband      Float?
-  min           Float?
-  max           Float?
-  maxRatePerSec Float?
-  sampleEveryMs Int?
-  staleAfterMs  Int?
-  warnHigh      Float?
-  warnLow       Float?
-  alarmHigh     Float?
-  alarmLow      Float?
-  department    String?
-  engineerEmail String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  tagId           String
+  slug            String
+  name            String
+  unit            String?
+  dataType        String   @default("number")
+  deadband        Float?
+  min             Float?
+  max             Float?
+  maxRatePerSec   Float?
+  sampleEveryMs   Int?
+  staleAfterMs    Int?
+  warnHigh        Float?
+  warnLow         Float?
+  alarmHigh       Float?
+  alarmLow        Float?
+  department      String?
+  engineerEmail   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@index([machineId, machineRevision])
   @@index([machineId, tagId])
@@ -78,31 +79,30 @@ model TagDefinition {
 }
 
 model TagLatest {
-  id        String   @id @map("_id")
-  machineId String
-  tagId     String
-  ts        DateTime
-  valueNumber Float?
-  valueBool Boolean?
-  valueString String?
-  quality   String   @default("good")
+  id           String    @id @map("_id")
+  machineId    String
+  tagId        String
+  ts           DateTime
+  valueNumber  Float?
+  valueBool    Boolean?
+  valueString  String?
+  quality      String    @default("good")
   lastSampleAt DateTime?
-  updatedAt DateTime @updatedAt
+  updatedAt    DateTime  @updatedAt
 
   @@index([machineId, tagId])
   @@index([machineId, ts])
 }
 
 model TagSample {
-  id        String   @id @map("_id")
-  machineId String
-  tagId     String
-  ts        DateTime
+  id          String   @id @map("_id")
+  machineId   String
+  tagId       String
+  ts          DateTime
   valueNumber Float?
-  valueBool Boolean?
+  valueBool   Boolean?
   valueString String?
-  quality   String   @default("good")
+  quality     String   @default("good")
 
   @@index([machineId, tagId, ts])
 }
-

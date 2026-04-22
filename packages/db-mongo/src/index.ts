@@ -1,3 +1,6 @@
+import { config } from "dotenv";
+config({ path: "../../.env" });
+
 import { PrismaClient } from "@prisma/client";
 
 let prismaSingleton: PrismaClient | null = null;
@@ -10,4 +13,3 @@ export function getMongoClient(): PrismaClient {
 }
 
 export type { PrismaClient };
-
