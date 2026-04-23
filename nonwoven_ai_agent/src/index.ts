@@ -30,7 +30,7 @@ for (const tag of Object.keys(TAGS)) rolling[tag] = [];
 function checkAnomalies(snapshot: any) {
   const tags = snapshot.tags || {};
   const currentTs = Date.now();
-  
+
   for (const [name, cfg] of Object.entries(TAGS)) {
     const val = tags[name]?.value;
     if (val === null || val === undefined || typeof val === "boolean") continue;
@@ -46,8 +46,8 @@ function checkAnomalies(snapshot: any) {
 
     if (rolling[name].length >= 20) {
       const arr = rolling[name];
-      const mean = arr.reduce((a,b) => a+b, 0) / arr.length;
-      const variance = arr.reduce((a,b) => a + Math.pow(b - mean, 2), 0) / arr.length;
+      const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+      const variance = arr.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / arr.length;
       const stdev = Math.sqrt(variance);
       if (stdev > 0 && Math.abs(val - mean) > 3 * stdev) {
         fireAlert(name, cfg.label, val, cfg.unit, "ANOMALY", `Statistical spike detected: ${val.toFixed(1)} (mean=${mean.toFixed(1)}, σ=${stdev.toFixed(1)})`);
@@ -73,7 +73,7 @@ function checkAnomalies(snapshot: any) {
 function fireAlert(tag: string, label: string, value: number, unit: string, level: string, message: string) {
   const currentTs = Date.now();
   const cooldownKey = `${tag}_${level}`;
-  
+
   if (currentTs - (lastAlertTime[cooldownKey] || 0) < config.ALERT_COOLDOWN_SECONDS * 1000) {
     return;
   }
@@ -117,7 +117,7 @@ async function jobAnalyzeAlerts() {
   const batch = pendingAlerts.splice(0, pendingAlerts.length);
   if (batch.length === 0) return;
   console.log(`Processing ${batch.length} queued alert(s) via LangGraph...`);
-  
+
   for (const alert of batch) {
     await analyzeAlert(alert);
   }
@@ -130,13 +130,13 @@ async function jobDailySummary() {
     const stats = getDailyStats(dateStr);
     const todayAlerts = getAlertsSince(24);
     const readings = getRecentReadings("TOTAL_METER", 24);
-    
+
     let production = 0;
     if (readings.length >= 2) production = readings[0].value - readings[readings.length - 1].value;
-    
+
     const uptimeMinutes = Math.floor((readings.length * config.DB_SAMPLE_INTERVAL) / 60);
     const insightsText = await generateDailyInsights(dateStr);
-    
+
     latestInsights = { date: dateStr, text: insightsText };
     storeDailySummary(dateStr, stats, production, uptimeMinutes, todayAlerts.length, insightsText);
   } catch (err) {
@@ -217,7 +217,7 @@ async function start() {
   console.log("=".repeat(60));
   console.log("  [FACTORY] Nonwoven AI Agent v2.5 - LangGraph TS Edition");
   console.log("=".repeat(60));
-  
+
   initDb();
 
   // Setup cron jobs using node-cron format instead of APScheduler
