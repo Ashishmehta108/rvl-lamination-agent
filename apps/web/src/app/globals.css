@@ -3,82 +3,100 @@
 /* ── Inter font ─────────────────────────────────────────────────────────── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
 
-/* ── Theme tokens ───────────────────────────────────────────────────────── */
+/* ── Claude-Inspired Theme ──────────────────────────────────────────────── */
 :root,
 [data-theme="light"] {
-  --bg:           #faf9f7;
+  --bg:           #f9f8f6;
   --surface:      #ffffff;
-  --surface-2:    #f3f2ef;
-  --surface-3:    #eceae5;
-  --border:       #e8e6e1;
+  --surface-2:    #f1efeb;
+  --surface-3:    #e8e6e1;
+  --border:       #e5e2dd;
   --border-subtle:#f0eee9;
-  --text:         #1a1915;
-  --text-muted:   #8a8680;
-  --text-faint:   #b5b2ad;
-  --accent:       #c96a2a;
-  --accent-hover: #b85f24;
+  --text:         #3a3834;
+  --text-muted:   #6b6964;
+  --text-faint:   #a5a29d;
+  --accent:       #9e5a32; /* Muted copper */
+  --accent-hover: #8a4e2b;
   --accent-faint: #f5ede5;
-  --shadow:       0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.05);
-  --shadow-md:    0 4px 12px rgba(0,0,0,.08), 0 2px 4px rgba(0,0,0,.05);
+  --shadow:       0 1px 2px rgba(0,0,0,.03);
 }
 
 [data-theme="dark"] {
-  --bg:           #1a1915;
-  --surface:      #22201c;
-  --surface-2:    #2c2a25;
-  --surface-3:    #363430;
-  --border:       #3a3830;
-  --border-subtle:#2e2c28;
-  --text:         #e8e6e1;
-  --text-muted:   #6b6860;
-  --text-faint:   #4a4845;
-  --accent:       #c96a2a;
-  --accent-hover: #d4752f;
-  --accent-faint: #2e2015;
-  --shadow:       0 1px 3px rgba(0,0,0,.3), 0 1px 2px rgba(0,0,0,.2);
-  --shadow-md:    0 4px 12px rgba(0,0,0,.4), 0 2px 4px rgba(0,0,0,.2);
+  --bg:           #131210;
+  --surface:      #1c1b18;
+  --surface-2:    #262421;
+  --surface-3:    #2f2d29;
+  --border:       #2d2b27;
+  --border-subtle:#24221f;
+  --text:         #d4d2cd;
+  --text-muted:   #8a8882;
+  --text-faint:   #5c5a56;
+  --accent:       #b36d42;
+  --accent-hover: #c47c50;
+  --accent-faint: #2d2018;
+  --shadow:       0 1px 4px rgba(0,0,0,.2);
 }
 
-/* ── Base reset ─────────────────────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; }
-
-html, body { height: 100%; margin: 0; }
+/* ── Base ───────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; border-color: var(--border); }
 
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px; /* Slightly smaller for precision look */
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
-  transition: background .2s ease, color .2s ease;
+  letter-spacing: -0.01em;
 }
 
-a { color: inherit; text-decoration: none; }
-
-/* ── Scrollbar ──────────────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
-
-/* ── Utility classes ────────────────────────────────────────────────────── */
-.rvl-surface   { background: var(--surface); }
-.rvl-surface-2 { background: var(--surface-2); }
-.rvl-border    { border: 1px solid var(--border); }
-.rvl-muted     { color: var(--text-muted); }
+/* ── Components ─────────────────────────────────────────────────────────── */
 .rvl-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 8px;
   box-shadow: var(--shadow);
+  transition: border-color .15s ease;
 }
 
-/* ── Transitions on theme-sensitive props ───────────────────────────────── */
+.rvl-btn-primary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+
+.rvl-btn-primary:hover {
+  background: var(--surface-2);
+  border-color: var(--text-faint);
+}
+
+.rvl-input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text);
+  outline: none;
+  transition: border-color .15s ease;
+}
+
+.rvl-input:focus {
+  border-color: var(--accent);
+}
+
+/* ── Transitions ────────────────────────────────────────────────────────── */
 * {
-  transition-property: background-color, border-color, color, fill, stroke;
-  transition-duration: .18s;
+  transition-property: background-color, border-color, color;
+  transition-duration: .2s;
   transition-timing-function: ease;
 }
-/* But don't slow down animations */
-.rvl-msg, .rvl-badge { transition: none; }

@@ -1,5 +1,5 @@
 import type PgBoss from "pg-boss";
-import type { BaseLogger } from "pino";
+import type { Logger } from "pino";
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -10,6 +10,7 @@ import { config } from "../config.js";
 import { Jobs } from "./jobs.js";
 
 type ReportRunPayload = {
+  runId?: string;
   scheduleId?: string;
   templateId: string;
   machineId: string;
@@ -17,28 +18,52 @@ type ReportRunPayload = {
   windowEnd: string;
 };
 
-export async function registerReportRunner(boss: PgBoss, logger: BaseLogger) {
+export async function registerReportRunner(boss: PgBoss, logger: Logger) {
+  logger.info({ job: Jobs.reportRun }, "worker registered");
+
   await boss.work<ReportRunPayload>(Jobs.reportRun, { teamConcurrency: 2 } as any, async (job: any) => {
     const db = getPgDb();
     const payload = job.data as ReportRunPayload;
+    const runId = payload.runId ?? newId("run");
+    const runLog = (logger as any).child
+      ? (logger as any).child({ runId, machineId: payload.machineId, scheduleId: payload.scheduleId ?? null })
+      : logger;
+    runLog.info({ jobId: job.id }, "report run starting");
 
-    const runId = newId("run");
     const windowStart = new Date(payload.windowStart);
     const windowEnd = new Date(payload.windowEnd);
 
-    await db.insert(schema.reportRuns).values({
-      id: runId,
-      scheduleId: payload.scheduleId ?? null,
-      templateId: payload.templateId,
-      machineId: payload.machineId,
-      status: "running",
-      windowStart,
-      windowEnd,
-      startedAt: new Date(),
-      metrics: {}
-    });
+    // If trigger created a queued run already, transition it; otherwise create a fresh run.
+    const updated = await db
+      .update(schema.reportRuns)
+      .set({
+        scheduleId: payload.scheduleId ?? null,
+        templateId: payload.templateId,
+        machineId: payload.machineId,
+        status: "running",
+        windowStart,
+        windowEnd,
+        startedAt: new Date()
+      })
+      .where(eq(schema.reportRuns.id, runId))
+      .returning({ id: schema.reportRuns.id });
+
+    if (updated.length === 0) {
+      await db.insert(schema.reportRuns).values({
+        id: runId,
+        scheduleId: payload.scheduleId ?? null,
+        templateId: payload.templateId,
+        machineId: payload.machineId,
+        status: "running",
+        windowStart,
+        windowEnd,
+        startedAt: new Date(),
+        metrics: {}
+      });
+    }
 
     try {
+      runLog.info({ windowStart: payload.windowStart, windowEnd: payload.windowEnd }, "fetching alerts for report");
       const alerts = await db
         .select()
         .from(schema.alertEvents)
@@ -51,6 +76,7 @@ export async function registerReportRunner(boss: PgBoss, logger: BaseLogger) {
         )
         .limit(2000);
 
+      runLog.info({ alerts: alerts.length }, "rendering report html");
       const html = renderHtmlReport({
         machineId: payload.machineId,
         windowStart,
@@ -58,9 +84,13 @@ export async function registerReportRunner(boss: PgBoss, logger: BaseLogger) {
         alerts
       });
 
-      await fs.mkdir(config.artifactsDir, { recursive: true });
-      const fileName = `report_${payload.machineId}_${windowStart.toISOString().slice(0, 10)}_${windowEnd.toISOString().slice(0, 10)}.html`;
-      const filePath = path.resolve(config.artifactsDir, fileName);
+      const artifactsPath = path.resolve(process.cwd(), config.artifactsDir);
+      await fs.mkdir(artifactsPath, { recursive: true });
+      
+      const fileName = `report_${payload.machineId}_${runId}.html`;
+      const filePath = path.resolve(artifactsPath, fileName);
+
+      runLog.info({ filePath }, "writing report artifact");
       await fs.writeFile(filePath, html, "utf8");
 
       const checksum = crypto.createHash("sha256").update(html).digest("hex");
@@ -81,13 +111,13 @@ export async function registerReportRunner(boss: PgBoss, logger: BaseLogger) {
         .set({ status: "succeeded", finishedAt: new Date(), metrics: { alerts: alerts.length } })
         .where(eq(schema.reportRuns.id, runId));
 
-      logger.info({ runId, filePath }, "report generated");
+      runLog.info({ filePath }, "report generated");
     } catch (err: any) {
       await db
         .update(schema.reportRuns)
         .set({ status: "failed", finishedAt: new Date(), error: String(err) })
         .where(eq(schema.reportRuns.id, runId));
-      logger.error({ err: String(err), runId }, "report failed");
+      runLog.error({ err: String(err) }, "report failed");
       throw err;
     }
   });
@@ -123,13 +153,12 @@ function renderHtmlReport(args: { machineId: string; windowStart: Date; windowEn
   </head>
   <body>
     <h2>RVL Lamination Agent Report</h2>
-    <div class="muted">Machine: ${esc(args.machineId)}</div>
-    <div class="muted">Window: ${esc(args.windowStart.toISOString())} → ${esc(args.windowEnd.toISOString())}</div>
+    <p>Machine: ${esc(args.machineId)}</p>
+    <p class="muted">Window: ${esc(args.windowStart.toISOString())} → ${esc(args.windowEnd.toISOString())}</p>
     <table>
       <thead><tr><th>Severity</th><th>Title</th><th>Start</th><th>Status</th></tr></thead>
-      <tbody>${rows || `<tr><td colspan="4" class="muted">No alerts</td></tr>`}</tbody>
+      <tbody>${rows || `<tr><td colspan="4" class="muted">No alerts in this period</td></tr>`}</tbody>
     </table>
   </body>
 </html>`;
 }
-

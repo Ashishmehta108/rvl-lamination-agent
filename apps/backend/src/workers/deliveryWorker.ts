@@ -2,7 +2,7 @@ import type PgBoss from "pg-boss";
 import type { BaseLogger } from "pino";
 import nodemailer from "nodemailer";
 import { getPgDb, schema } from "@rvl/db-postgres";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { Jobs } from "./jobs.js";
 
@@ -33,9 +33,13 @@ export async function registerDeliveryWorker(boss: PgBoss, logger: BaseLogger) {
     const db = getPgDb();
     const deliveryId = (job.data as DeliverPayload).deliveryId;
 
-    const [delivery] = await db.select().from(schema.alertDeliveries).where(eq(schema.alertDeliveries.id, deliveryId));
+    const claimed = await db
+      .update(schema.alertDeliveries)
+      .set({ status: "sending", attempt: sql`${schema.alertDeliveries.attempt} + 1` })
+      .where(and(eq(schema.alertDeliveries.id, deliveryId), inArray(schema.alertDeliveries.status, ["queued", "failed"] as any)))
+      .returning();
+    const delivery = claimed[0];
     if (!delivery) return;
-    if (delivery.status === "sent") return;
 
     const transport = getTransport();
     if (!transport) {
@@ -50,11 +54,6 @@ export async function registerDeliveryWorker(boss: PgBoss, logger: BaseLogger) {
     if (!evt) return;
 
     try {
-      await db
-        .update(schema.alertDeliveries)
-        .set({ status: "sending", attempt: delivery.attempt + 1 })
-        .where(eq(schema.alertDeliveries.id, deliveryId));
-
       const subject = `[${evt.severity.toUpperCase()}] ${evt.title}`;
       const text = [
         `Machine: ${evt.machineId}`,
@@ -76,14 +75,14 @@ export async function registerDeliveryWorker(boss: PgBoss, logger: BaseLogger) {
       await db
         .update(schema.alertDeliveries)
         .set({ status: "sent", sentAt: new Date(), lastError: null })
-        .where(eq(schema.alertDeliveries.id, deliveryId));
+        .where(and(eq(schema.alertDeliveries.id, deliveryId), eq(schema.alertDeliveries.status, "sending" as any)));
 
       logger.info({ deliveryId }, "alert delivered");
     } catch (err: any) {
       await db
         .update(schema.alertDeliveries)
         .set({ status: "failed", lastError: String(err) })
-        .where(eq(schema.alertDeliveries.id, deliveryId));
+        .where(and(eq(schema.alertDeliveries.id, deliveryId), eq(schema.alertDeliveries.status, "sending" as any)));
       logger.warn({ err: String(err), deliveryId }, "alert delivery failed");
       throw err;
     }

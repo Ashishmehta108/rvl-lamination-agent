@@ -21,7 +21,10 @@ export async function registerChatRoutes(app: FastifyInstance) {
       machineId: reqBody.machineId,
       tagIds: reqBody.tagIds,
       topK: config.ragTopK
-    }).catch(() => []);
+    }).catch((err) => {
+      app.log.warn({ err: String(err) }, "rag_query_failed");
+      return [];
+    });
 
     const contextText =
       contexts.length === 0
@@ -39,7 +42,13 @@ export async function registerChatRoutes(app: FastifyInstance) {
 
     // Trim chat history: keep last 12 messages max to stay within ctx
     const messages = reqBody.messages.slice(-12);
-    const answer = await chatOnce([{ role: "system", content: system }, ...messages]);
+    let answer: string;
+    try {
+      answer = await chatOnce([{ role: "system", content: system }, ...messages]);
+    } catch (err) {
+      app.log.error({ err: String(err) }, "llm_chat_failed");
+      return reply.code(503).send({ error: "llm_unavailable" });
+    }
 
     return reply.send({
       answer,
