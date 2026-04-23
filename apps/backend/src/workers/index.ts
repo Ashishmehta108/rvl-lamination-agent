@@ -4,7 +4,10 @@ import { registerAlertDetectionWorker } from "./alertDetection.js";
 import { registerDeliveryWorker } from "./deliveryWorker.js";
 import { registerReportRunner } from "./reportRunner.js";
 import { startReportScheduler } from "./reportScheduler.js";
+import { registerMlWorker } from "./mlWorker.js";
 import { config } from "../config.js";
+import { Jobs } from "./jobs.js";
+import cron from "node-cron";
 
 let started = false;
 let retrying = false;
@@ -38,7 +41,25 @@ export async function startWorkers({ logger }: { logger: any }) {
   await registerAlertDetectionWorker(boss, logger);
   await registerDeliveryWorker(boss, logger);
   await registerReportRunner(boss, logger);
+  await registerMlWorker(boss, logger);
   await startReportScheduler(boss, logger);
+
+  // Weekly ML retrain: every Sunday at 02:00 AM UTC
+  const mlRetrainCron = process.env["ML_RETRAIN_CRON"] ?? "0 2 * * 0";
+  if (cron.validate(mlRetrainCron)) {
+    cron.schedule(mlRetrainCron, async () => {
+      try {
+        await boss.send(Jobs.mlRetrain, {});
+        logger.info("ml.retrain job enqueued by weekly scheduler");
+      } catch (err) {
+        logger.error({ err: String(err) }, "failed to enqueue ml.retrain");
+      }
+    });
+    logger.info({ cron: mlRetrainCron }, "ML weekly retrain scheduled");
+  } else {
+    logger.warn({ cron: mlRetrainCron }, "Invalid ML_RETRAIN_CRON, weekly retrain disabled");
+  }
+
   started = true;
   logger.info("workers started");
 }

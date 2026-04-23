@@ -4,6 +4,7 @@ import { newId } from "@rvl/shared";
 import type { IngestBatch, IngestResponse } from "@rvl/shared";
 import { tryGetBoss } from "../queue/boss.js";
 import { Jobs } from "../workers/jobs.js";
+import { mlCollectAndPredict } from "./mlService.js";
 
 type CleanQuality = "good" | "bad";
 
@@ -300,5 +301,39 @@ export async function cleanAndPersistBatch(batch: IngestBatch, logger: any): Pro
   }
 
   logger.debug({ accepted, rejected, machineId: batch.machineId }, "ingest batch processed");
+
+  // ── ML pipeline: collect + predict (non-blocking) ────────────
+  // Build a flat tag map from the accepted tags in this batch
+  if (accepted > 0) {
+    const mlTags: Record<string, unknown> = {};
+    for (const t of batch.tags) {
+      const slug = t.tagSlug ?? t.tagId;
+      if (slug && t.value !== null && t.value !== undefined) {
+        mlTags[slug] = t.value;
+      }
+    }
+    if (Object.keys(mlTags).length > 0) {
+      const ts = batch.sentAt instanceof Date
+        ? batch.sentAt.toISOString()
+        : String(batch.sentAt);
+      // Fire-and-forget: never blocks ingest response
+      void mlCollectAndPredict(ts, mlTags).then((result) => {
+        if (result?.is_anomaly) {
+          logger.warn(
+            {
+              machineId: batch.machineId,
+              mlScore: result.score,
+              anomalousTags: result.anomalous_tags,
+              alertId: result.alert_id ?? null,
+            },
+            "ml_anomaly_detected"
+          );
+        }
+      }).catch(() => {
+        // ML server offline — silently skip
+      });
+    }
+  }
+
   return { accepted, rejected, perTag };
 }

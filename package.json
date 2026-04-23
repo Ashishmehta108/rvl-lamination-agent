@@ -10,6 +10,8 @@
   },
   "scripts": {
     "dev": "concurrently -n backend,web,electron -c blue,green,magenta \"npm run dev -w apps/backend\" \"npm run dev -w apps/web\" \"wait-on http://127.0.0.1:3000 && npm run dev -w apps/desktop\"",
+    "dev:ml": "python packages/ml/start_ml.py",
+    "dev:all": "concurrently -n backend,web,electron,ml -c blue,green,magenta,yellow \"npm run dev -w apps/backend\" \"npm run dev -w apps/web\" \"wait-on http://127.0.0.1:3000 && npm run dev -w apps/desktop\" \"python packages/ml/start_ml.py\"",
     "build": "npm run build:packages && npm run build:apps",
     "build:packages": "npm run build -w packages/shared && npm run build -w packages/db-mongo && npm run build -w packages/db-postgres && npm run build -w packages/rag",
     "build:apps": "npm run build -w apps/backend && npm run build -w apps/web && npm run build -w apps/desktop",
