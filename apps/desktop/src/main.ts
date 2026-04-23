@@ -26,6 +26,10 @@ function createWindow() {
   });
 
   const url = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:3000";
+<<<<<<< HEAD
+  console.log(`[Desktop] Loading URL: ${url}`);
+  void win.loadURL(url);
+=======
   void (async () => {
     const ok = await waitForHttp(url, 10_000);
     if (!ok) {
@@ -43,6 +47,7 @@ function createWindow() {
     }
     await win.loadURL(url);
   })();
+>>>>>>> aae9254029dd7933b24756c4a7082b29a682d2c9
 }
 
 app.whenReady().then(() => {

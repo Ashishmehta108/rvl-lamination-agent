@@ -9,7 +9,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "concurrently -n backend,web,electron -c blue,green,magenta \"npm run dev -w apps/backend\" \"npm run dev -w apps/web\" \"npm run dev -w apps/desktop\"",
+    "dev": "concurrently -n backend,web,electron -c blue,green,magenta \"npm run dev -w apps/backend\" \"npm run dev -w apps/web\" \"wait-on http://127.0.0.1:3000 && npm run dev -w apps/desktop\"",
     "build": "npm run build:packages && npm run build:apps",
     "build:packages": "npm run build -w packages/shared && npm run build -w packages/db-mongo && npm run build -w packages/db-postgres && npm run build -w packages/rag",
     "build:apps": "npm run build -w apps/backend && npm run build -w apps/web && npm run build -w apps/desktop",
@@ -24,8 +24,10 @@
   "devDependencies": {
     "@types/node": "^25.6.0",
     "concurrently": "^9.1.2",
+    "cross-env": "^10.1.0",
     "dotenv": "^17.4.2",
     "pm2": "^6.0.10",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "wait-on": "^9.0.5"
   }
 }
