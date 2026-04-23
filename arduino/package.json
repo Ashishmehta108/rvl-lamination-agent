@@ -1,0 +1,16 @@
+{
+  "name": "rvl-rpi-data-source",
+  "version": "1.0.0",
+  "description": "Raspberry Pi 4B — Modbus TCP Server + Remote Data Pipeline for Nonwoven AI Agent",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "serve": "node server.js"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "express": "^4.21.2",
+    "modbus-serial": "^8.0.6"
+  }
+}
