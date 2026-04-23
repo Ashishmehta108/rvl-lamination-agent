@@ -26,13 +26,11 @@ function createWindow() {
   });
 
   const url = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:3000";
-<<<<<<< HEAD
-  console.log(`[Desktop] Loading URL: ${url}`);
-  void win.loadURL(url);
-=======
   void (async () => {
+    console.log(`[Desktop] Checking for server at: ${url}`);
     const ok = await waitForHttp(url, 10_000);
     if (!ok) {
+      console.error(`[Desktop] Server not reachable: ${url}`);
       await win.loadURL(
         "data:text/html," +
           encodeURIComponent(
@@ -45,9 +43,9 @@ function createWindow() {
       );
       return;
     }
+    console.log(`[Desktop] Server found. Loading URL: ${url}`);
     await win.loadURL(url);
   })();
->>>>>>> aae9254029dd7933b24756c4a7082b29a682d2c9
 }
 
 app.whenReady().then(() => {

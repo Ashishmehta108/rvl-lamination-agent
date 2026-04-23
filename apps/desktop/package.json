@@ -5,12 +5,7 @@
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
-<<<<<<< HEAD
     "dev": "cross-env NODE_OPTIONS=\"--import tsx\" electron src/main.ts",
-=======
-    "dev": "tsx src/dev.ts",
-    "dev:electron": "electron --no-loader --import tsx src/main.ts",
->>>>>>> aae9254029dd7933b24756c4a7082b29a682d2c9
     "build": "tsc -p tsconfig.json",
     "start": "electron dist/main.js",
     "lint": "eslint .",
