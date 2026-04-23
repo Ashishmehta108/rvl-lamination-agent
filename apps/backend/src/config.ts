@@ -34,6 +34,7 @@ function getEnvBool(key: string, defaultValue?: boolean): boolean {
 export const config = {
   nodeEnv: getEnv("NODE_ENV", "development"),
   port: getEnvNum("BACKEND_PORT", 7000),
+  host: getEnv("BACKEND_HOST", getEnv("NODE_ENV", "development") === "production" ? "0.0.0.0" : "127.0.0.1"),
 
   // DBs
   postgresUrl: getEnv("POSTGRES_URL"),
@@ -63,4 +64,13 @@ export const config = {
   // Files
   artifactsDir: getEnv("ARTIFACTS_DIR", "./data/artifacts")
 };
+
+if (config.nodeEnv === "production") {
+  if (config.apiAuthToken === "dev-local-token") {
+    throw new Error("Refusing to start in production with API_AUTH_TOKEN=dev-local-token");
+  }
+  if (config.mcpAuthToken === "dev-local-token") {
+    throw new Error("Refusing to start in production with MCP_AUTH_TOKEN=dev-local-token");
+  }
+}
 

@@ -23,7 +23,6 @@ model Tag {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   archivedAt    DateTime?
-
   @@index([tenantId, slug])
   @@index([tenantId, name])
 }

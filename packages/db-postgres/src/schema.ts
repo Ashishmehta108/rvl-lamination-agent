@@ -59,6 +59,7 @@ export const alertEvents = pgTable(
       t.status,
       t.startsAt
     ),
+    machineStartsIdx: index("alert_events_machine_starts_idx").on(t.machineId, t.startsAt),
     dedupeIdx: uniqueIndex("alert_events_machine_dedupe_idx").on(t.machineId, t.dedupeKey)
   })
 );
@@ -166,7 +167,8 @@ export const reportRuns = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
   },
   (t) => ({
-    machineWindowIdx: index("report_runs_machine_window_idx").on(t.machineId, t.windowStart, t.windowEnd)
+    machineWindowIdx: index("report_runs_machine_window_idx").on(t.machineId, t.windowStart, t.windowEnd),
+    machineCreatedIdx: index("report_runs_machine_created_idx").on(t.machineId, t.createdAt)
   })
 );
 

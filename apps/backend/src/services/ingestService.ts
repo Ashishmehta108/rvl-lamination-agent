@@ -1,11 +1,48 @@
 import type { BaseLogger } from "pino";
-import { getMongoClient } from "@rvl/db-mongo";
+import { getMongoClient, getNativeDb } from "@rvl/db-mongo";
 import { newId } from "@rvl/shared";
 import type { IngestBatch, IngestResponse } from "@rvl/shared";
 import { tryGetBoss } from "../queue/boss.js";
 import { Jobs } from "../workers/jobs.js";
 
 type CleanQuality = "good" | "bad";
+
+type Def = {
+  tagId: string;
+  slug: string;
+  name?: string;
+  dataType?: string;
+  deadband?: number | null;
+  min?: number | null;
+  max?: number | null;
+  maxRatePerSec?: number | null;
+  sampleEveryMs?: number | null;
+};
+
+const defsCache = new Map<
+  string,
+  { expiresAt: number; defsByTagId: Map<string, Def>; defsBySlug: Map<string, Def> }
+>();
+
+async function getDefsForProfile(args: {
+  tagDefinitions: any;
+  machineId: string;
+  machineRevision: string;
+  nowMs: number;
+}): Promise<{ defsByTagId: Map<string, Def>; defsBySlug: Map<string, Def> }> {
+  const key = `${args.machineId}:${args.machineRevision}`;
+  const cached = defsCache.get(key);
+  if (cached && cached.expiresAt > args.nowMs) return cached;
+
+  const defs = (await args.tagDefinitions
+    .find({ machineId: args.machineId, machineRevision: args.machineRevision })
+    .toArray()) as Def[];
+  const defsByTagId = new Map(defs.map((d) => [d.tagId, d]));
+  const defsBySlug = new Map(defs.map((d) => [d.slug, d]));
+  const next = { expiresAt: args.nowMs + 30_000, defsByTagId, defsBySlug };
+  defsCache.set(key, next);
+  return next;
+}
 
 function coerceValue(input: unknown, dataType: string): { ok: boolean; value: any; reason?: string } {
   if (input === null) return { ok: true, value: null };
@@ -80,245 +117,188 @@ function numericQualityChecks(args: {
 }
 
 export async function cleanAndPersistBatch(batch: IngestBatch, logger: any): Promise<IngestResponse> {
-  const prisma = getMongoClient();
+  const db = await getNativeDb();
   const boss = await tryGetBoss();
 
   let accepted = 0;
   let rejected = 0;
   const perTag: IngestResponse["perTag"] = [];
 
-  // Ensure profile exists (machineId+revision)
-  await prisma.machineProfile.upsert({
-    where: { id: `${batch.machineId}:${batch.machineRevision}` },
-    create: {
-      id: `${batch.machineId}:${batch.machineRevision}`,
-      machineId: batch.machineId,
-      machineRevision: batch.machineRevision
-    },
-    update: {}
-  });
+  const machineProfiles = db.collection<any>("MachineProfile");
+  const machineIngestStates = db.collection<any>("MachineIngestState");
+  const tags = db.collection<any>("Tag");
+  const tagDefinitions = db.collection<any>("TagDefinition");
+  const tagLatests = db.collection<any>("TagLatest");
+  const tagSamples = db.collection<any>("TagSample");
 
-  // Per-machine ingest state (seq monotonic-ish)
+  const profileId = `${batch.machineId}:${batch.machineRevision}`;
+  await machineProfiles.updateOne(
+    { _id: profileId },
+    { $set: { machineId: batch.machineId, machineRevision: batch.machineRevision, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+    { upsert: true }
+  );
+
   const ingestStateId = `${batch.machineId}:${batch.machineRevision}`;
-  const ingestState = await prisma.machineIngestState.findUnique({ where: { id: ingestStateId } });
-  if (ingestState && batch.seq < ingestState.lastSeq) {
-    // Likely replay/reset. Accept but do not regress state; tag-level out-of-order is still enforced.
-    logger.warn(
-      { machineId: batch.machineId, machineRevision: batch.machineRevision, seq: batch.seq, lastSeq: ingestState.lastSeq },
-      "ingest seq regressed (possible replay/reset)"
+  const ingestState = await machineIngestStates.findOne({ _id: ingestStateId });
+  if (!ingestState) {
+    await machineIngestStates.updateOne(
+      { _id: ingestStateId },
+      {
+        $set: {
+          machineId: batch.machineId,
+          machineRevision: batch.machineRevision,
+          lastSeq: batch.seq,
+          lastSentAt: batch.sentAt,
+          updatedAt: new Date()
+        },
+        $setOnInsert: { createdAt: new Date() }
+      },
+      { upsert: true }
     );
   } else {
-    await prisma.machineIngestState.upsert({
-      where: { id: ingestStateId },
-      create: {
-        id: ingestStateId,
-        machineId: batch.machineId,
-        machineRevision: batch.machineRevision,
-        lastSeq: batch.seq,
-        lastSentAt: batch.sentAt
-      },
-      update: {
-        lastSeq: batch.seq,
-        lastSentAt: batch.sentAt
+    const updateRes = await machineIngestStates.updateOne(
+      { _id: ingestStateId, lastSeq: { $lt: batch.seq } },
+      {
+        $set: {
+          lastSeq: batch.seq,
+          lastSentAt: batch.sentAt,
+          updatedAt: new Date()
+        }
       }
-    });
+    );
+    if (updateRes.modifiedCount === 0) {
+      logger.warn(
+        { machineId: batch.machineId, machineRevision: batch.machineRevision, seq: batch.seq, lastSeq: ingestState.lastSeq ?? null },
+        "stale_ingest_seq_batch_ignored"
+      );
+      for (const t of batch.tags) {
+        perTag.push({ tagId: t.tagId, tagSlug: t.tagSlug, status: "rejected", reason: "stale_seq" });
+      }
+      return { accepted: 0, rejected: batch.tags.length, perTag };
+    }
   }
 
-  // Pull tag definitions for this revision (fast path)
-  const defs = await prisma.tagDefinition.findMany({
-    where: { machineId: batch.machineId, machineRevision: batch.machineRevision }
+  const nowMs = Date.now();
+  const { defsByTagId, defsBySlug } = await getDefsForProfile({
+    tagDefinitions,
+    machineId: batch.machineId,
+    machineRevision: batch.machineRevision,
+    nowMs
   });
-  const defsByTagId = new Map(defs.map((d) => [d.tagId, d]));
-  const defsBySlug = new Map(defs.map((d) => [d.slug, d]));
+
+  // Preload latest values for all tags in this batch to avoid per-tag RTT
+  const latestIds = batch.tags.map((t) => `${batch.machineId}:${t.tagId ?? (t.tagSlug ?? "")}`).filter((s) => s.includes(":") && !s.endsWith(":"));
+  const prevLatests = latestIds.length ? await tagLatests.find({ _id: { $in: latestIds } }).toArray() : [];
+  const prevLatestById = new Map(prevLatests.map((d: any) => [d._id, d]));
+
+  const latestOps: any[] = [];
+  const sampleDocs: any[] = [];
 
   for (const t of batch.tags) {
     try {
       const ts = t.ts ?? batch.sentAt;
       const def = t.tagId ? defsByTagId.get(t.tagId) : t.tagSlug ? defsBySlug.get(t.tagSlug) : undefined;
 
-      // If unknown tag, create a minimal Tag + TagDefinition for this machine revision.
-      // This makes ingestion resilient during commissioning while still preserving machineRevision boundaries.
       let tagId = def?.tagId ?? t.tagId ?? newId("tag");
       let tagSlug = def?.slug ?? t.tagSlug ?? tagId;
       let dataType = def?.dataType ?? "number";
 
       if (!def) {
-        await prisma.tag.upsert({
-          where: { id: tagId },
-          create: {
-            id: tagId,
-            slug: tagSlug,
-            name: tagSlug,
-            aliases: []
-          },
-          update: {
-            slug: tagSlug,
-            name: tagSlug
-          }
-        });
-        await prisma.tagDefinition.upsert({
-          where: { id: `${batch.machineId}:${batch.machineRevision}:${tagId}` },
-          create: {
-            id: `${batch.machineId}:${batch.machineRevision}:${tagId}`,
-            machineId: batch.machineId,
-            machineRevision: batch.machineRevision,
-            tagId,
-            slug: tagSlug,
-            name: tagSlug,
-            dataType
-          },
-          update: {}
-        });
+        await tags.updateOne(
+          { _id: tagId },
+          { $set: { slug: tagSlug, name: tagSlug, aliases: [], updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+          { upsert: true }
+        );
+        const defId = `${batch.machineId}:${batch.machineRevision}:${tagId}`;
+        await tagDefinitions.updateOne(
+          { _id: defId },
+          { $set: { machineId: batch.machineId, machineRevision: batch.machineRevision, tagId, slug: tagSlug, name: tagSlug, dataType, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+          { upsert: true }
+        );
       } else {
         tagId = def.tagId;
         tagSlug = def.slug;
-        dataType = def.dataType;
+        dataType = def.dataType ?? "number";
       }
 
       const coerced = coerceValue(t.value, dataType);
-      if (!coerced.ok) {
-        rejected++;
-        perTag.push({ tagId, tagSlug, status: "rejected", reason: coerced.reason });
-        continue;
-      }
+      if (!coerced.ok) { rejected++; perTag.push({ tagId, tagSlug, status: "rejected", reason: coerced.reason }); continue; }
 
       const latestId = `${batch.machineId}:${tagId}`;
-      const prevLatest = await prisma.tagLatest.findUnique({ where: { id: latestId } });
-      if (prevLatest && isOutOfOrder(prevLatest.ts, ts)) {
-        rejected++;
-        perTag.push({ tagId, tagSlug, status: "rejected", reason: "out_of_order" });
-        continue;
-      }
+      const prevLatest = prevLatestById.get(latestId) ?? null;
+      if (prevLatest && isOutOfOrder(prevLatest.ts, ts)) { rejected++; perTag.push({ tagId, tagSlug, status: "rejected", reason: "out_of_order" }); continue; }
 
       let quality: CleanQuality = "good";
       const reasons: string[] = [];
 
       if (dataType === "number" && typeof coerced.value === "number") {
         const prevValue = typeof prevLatest?.valueNumber === "number" ? prevLatest.valueNumber : null;
-        const dtSec =
-          prevLatest?.ts && ts
-            ? Math.max(0, (ts.getTime() - prevLatest.ts.getTime()) / 1000)
-            : null;
-
-        const checked = numericQualityChecks({
-          value: coerced.value,
-          prevValue,
-          dtSec,
-          min: def?.min ?? null,
-          max: def?.max ?? null,
-          maxRatePerSec: def?.maxRatePerSec ?? null
-        });
-        quality = checked.quality;
-        reasons.push(...checked.reasons);
+        const dtSec = prevLatest?.ts && ts ? Math.max(0, (ts.getTime() - prevLatest.ts.getTime()) / 1000) : null;
+        const checked = numericQualityChecks({ value: coerced.value, prevValue, dtSec, min: def?.min ?? null, max: def?.max ?? null, maxRatePerSec: def?.maxRatePerSec ?? null });
+        quality = checked.quality; reasons.push(...checked.reasons);
 
         if (def?.deadband !== null && def?.deadband !== undefined && prevValue !== null) {
           if (Math.abs(coerced.value - prevValue) <= def.deadband) {
-            // Dedupe within deadband: update latest timestamp, but avoid sampling.
-            await prisma.tagLatest.upsert({
-              where: { id: latestId },
-              create: {
-                id: latestId,
-                machineId: batch.machineId,
-                tagId,
-                ts,
-                valueNumber: coerced.value,
-                quality: quality === "good" ? "good" : "bad"
-              },
-              update: {
-                ts,
-                valueNumber: coerced.value,
-                quality: quality === "good" ? "good" : "bad"
-              }
-            });
-
-            accepted++;
-            perTag.push({ tagId, tagSlug, status: "accepted" });
-            continue;
+            const latestUpdate = {
+              machineId: batch.machineId,
+              tagId,
+              ts,
+              valueNumber: coerced.value,
+              quality: quality === "good" ? "good" : "bad",
+              updatedAt: new Date()
+            };
+            latestOps.push({ updateOne: { filter: { _id: latestId }, update: { $set: latestUpdate }, upsert: true } });
+            prevLatestById.set(latestId, { _id: latestId, ...latestUpdate });
+            accepted++; perTag.push({ tagId, tagSlug, status: "accepted" }); continue;
           }
         }
       }
 
-      // Persist latest
-      const latestCreate: any = {
-        id: latestId,
-        machineId: batch.machineId,
-        tagId,
-        ts,
-        quality: quality === "good" ? "good" : "bad"
-      };
-      const latestUpdate: any = {
-        ts,
-        quality: quality === "good" ? "good" : "bad"
-      };
+      const latestUpdate: any = { machineId: batch.machineId, tagId, ts, quality: quality === "good" ? "good" : "bad", updatedAt: new Date() };
+      if (dataType === "number") latestUpdate.valueNumber = coerced.value;
+      else if (dataType === "boolean") latestUpdate.valueBool = coerced.value;
+      else latestUpdate.valueString = coerced.value;
 
-      if (dataType === "number") {
-        latestCreate.valueNumber = typeof coerced.value === "number" ? coerced.value : undefined;
-        latestUpdate.valueNumber = typeof coerced.value === "number" ? coerced.value : undefined;
-      } else if (dataType === "boolean") {
-        latestCreate.valueBool = typeof coerced.value === "boolean" ? coerced.value : undefined;
-        latestUpdate.valueBool = typeof coerced.value === "boolean" ? coerced.value : undefined;
-      } else {
-        latestCreate.valueString = typeof coerced.value === "string" ? coerced.value : undefined;
-        latestUpdate.valueString = typeof coerced.value === "string" ? coerced.value : undefined;
-      }
-
-      // Sampling policy
       const sampleEveryMs = def?.sampleEveryMs ?? null;
       let shouldSample = true;
-      if (sampleEveryMs) {
-        const lastSampleAt = prevLatest?.lastSampleAt ?? null;
-        if (lastSampleAt && ts.getTime() - lastSampleAt.getTime() < sampleEveryMs) {
-          shouldSample = false;
-        }
-      }
+      if (sampleEveryMs && prevLatest?.lastSampleAt && ts.getTime() - prevLatest.lastSampleAt.getTime() < sampleEveryMs) shouldSample = false;
 
       if (shouldSample) {
-        await prisma.tagSample.create({
-          data: {
-            id: newId("tag"),
-            machineId: batch.machineId,
-            tagId,
-            ts,
-            valueNumber: dataType === "number" ? coerced.value ?? undefined : undefined,
-            valueBool: dataType === "boolean" ? coerced.value ?? undefined : undefined,
-            valueString: dataType === "string" ? coerced.value ?? undefined : undefined,
-            quality: quality === "good" ? "good" : "bad"
-          }
+        sampleDocs.push({
+          _id: newId("tag"),
+          machineId: batch.machineId,
+          tagId,
+          ts,
+          valueNumber: dataType === "number" ? coerced.value : undefined,
+          valueBool: dataType === "boolean" ? coerced.value : undefined,
+          valueString: dataType === "string" ? coerced.value : undefined,
+          quality: quality === "good" ? "good" : "bad"
         });
         latestUpdate.lastSampleAt = ts;
-        latestCreate.lastSampleAt = ts;
       }
 
-      await prisma.tagLatest.upsert({
-        where: { id: latestId },
-        create: latestCreate,
-        update: latestUpdate
-      });
-
-      if (boss) {
-        await boss.send(Jobs.tagUpdated, {
-          machineId: batch.machineId,
-          machineRevision: batch.machineRevision,
-          tagId,
-          ts: ts.toISOString()
-        });
-      }
-
-      accepted++;
-      perTag.push({
-        tagId,
-        tagSlug,
-        status: "accepted",
-        reason: reasons.length ? reasons.join(",") : undefined
-      });
+      latestOps.push({ updateOne: { filter: { _id: latestId }, update: { $set: latestUpdate }, upsert: true } });
+      prevLatestById.set(latestId, { _id: latestId, ...latestUpdate });
+      if (boss) await boss.send(Jobs.tagUpdated, { machineId: batch.machineId, machineRevision: batch.machineRevision, tagId, ts: ts.toISOString() });
+      accepted++; perTag.push({ tagId, tagSlug, status: "accepted", reason: reasons.length ? reasons.join(",") : undefined });
     } catch (err) {
-      rejected++;
-      logger.warn({ err }, "ingest tag rejected");
+      rejected++; logger.warn({ err }, "ingest tag rejected");
       perTag.push({ tagId: t.tagId, tagSlug: t.tagSlug, status: "rejected", reason: "persist_failed" });
     }
+  }
+
+  // Persist batched writes last (reduces total RTT dramatically)
+  if (sampleDocs.length) {
+    try {
+      await tagSamples.insertMany(sampleDocs, { ordered: false });
+    } catch (err) {
+      logger.warn({ err: String(err), count: sampleDocs.length }, "tagSamples insertMany failed (partial possible)");
+    }
+  }
+  if (latestOps.length) {
+    await tagLatests.bulkWrite(latestOps, { ordered: false });
   }
 
   logger.debug({ accepted, rejected, machineId: batch.machineId }, "ingest batch processed");
   return { accepted, rejected, perTag };
 }
-

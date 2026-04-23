@@ -1,5 +1,6 @@
 import PgBoss from "pg-boss";
 import { config } from "../config.js";
+import { Jobs } from "../workers/jobs.js";
 
 let bossSingleton: PgBoss | null = null;
 
@@ -14,6 +15,8 @@ export async function getBoss(): Promise<PgBoss> {
     expireInSeconds: 60 * 15
   });
   await boss.start();
+  // pg-boss requires queues to exist before send() returns an id.
+  await Promise.all(Object.values(Jobs).map((name) => (boss as any).createQueue?.(name).catch(() => undefined)));
   bossSingleton = boss;
   return bossSingleton;
 }

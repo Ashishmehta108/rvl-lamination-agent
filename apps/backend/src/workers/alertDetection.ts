@@ -61,50 +61,59 @@ export async function registerAlertDetectionWorker(boss: PgBoss, logger: BaseLog
     // If it already exists, we treat it as "still active" and do nothing.
     try {
       const alertId = newId("alert");
+      const deliveryTargets: Array<{ deliveryId: string }> = [];
 
-      await db.insert(schema.alertEvents).values({
-        id: alertId,
-        machineId,
-        ruleId: null,
-        severity,
-        status: "open",
-        title: `${def.name} ${primary.kind.toUpperCase()} (${primary.side})`,
-        description: `${def.slug}: ${v} ${def.unit ?? ""} crossed ${primary.side} threshold ${primary.threshold}`,
-        dedupeKey,
-        payload: {
+      await db.transaction(async (tx) => {
+        await tx.insert(schema.alertEvents).values({
+          id: alertId,
+          machineId,
+          ruleId: null,
+          severity,
+          status: "open",
+          title: `${def.name} ${primary.kind.toUpperCase()} (${primary.side})`,
+          description: `${def.slug}: ${v} ${def.unit ?? ""} crossed ${primary.side} threshold ${primary.threshold}`,
+          dedupeKey,
+          payload: {
+            tagId,
+            tagSlug: def.slug,
+            value: v,
+            ts: latest.ts.toISOString(),
+            threshold: primary.threshold,
+            kind: primary.kind,
+            side: primary.side
+          },
+          startsAt: now
+        });
+
+        await tx.insert(schema.alertTags).values({
+          alertEventId: alertId,
           tagId,
-          tagSlug: def.slug,
-          value: v,
-          ts: latest.ts.toISOString(),
-          threshold: primary.threshold,
-          kind: primary.kind,
-          side: primary.side
-        },
-        startsAt: now
-      });
+          tagSnapshot: { tagId, slug: def.slug, name: def.name, unit: def.unit, department: def.department }
+        });
 
-      await db.insert(schema.alertTags).values({
-        alertEventId: alertId,
-        tagId,
-        tagSnapshot: { tagId, slug: def.slug, name: def.name, unit: def.unit, department: def.department }
+        if (def.engineerEmail) {
+          const deliveryId = newId("delivery");
+          const idempotencyKey = `email:${alertId}:${def.engineerEmail}`;
+          await tx.insert(schema.alertDeliveries).values({
+            id: deliveryId,
+            alertEventId: alertId,
+            channel: "email",
+            destination: def.engineerEmail,
+            status: "queued",
+            attempt: 0,
+            idempotencyKey
+          });
+          deliveryTargets.push({ deliveryId });
+        }
       });
 
       logger.info({ alertId, machineId, tagId, severity }, "alert created");
-
-      // enqueue delivery attempts if we have a mapped engineer
-      if (def.engineerEmail) {
-        const deliveryId = newId("delivery");
-        const idempotencyKey = `email:${alertId}:${def.engineerEmail}`;
-        await db.insert(schema.alertDeliveries).values({
-          id: deliveryId,
-          alertEventId: alertId,
-          channel: "email",
-          destination: def.engineerEmail,
-          status: "queued",
-          attempt: 0,
-          idempotencyKey
-        });
-        await boss.send(Jobs.alertDeliver, { deliveryId });
+      for (const d of deliveryTargets) {
+        try {
+          await boss.send(Jobs.alertDeliver, d);
+        } catch (err) {
+          logger.error({ err: String(err), ...d }, "failed to enqueue alert delivery");
+        }
       }
     } catch (err: any) {
       // Unique violation => existing open alert with same dedupeKey already exists.
