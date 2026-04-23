@@ -12,6 +12,7 @@ function createWindow() {
   });
 
   const url = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:3000";
+  console.log(`[Desktop] Loading URL: ${url}`);
   void win.loadURL(url);
 }
 
