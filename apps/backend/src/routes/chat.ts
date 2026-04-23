@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { ChatRequestSchema } from "@rvl/shared";
-import { requireApiAuth } from "../auth.js";
+import { requireApiAuth, validateMachineAccess } from "../auth.js";
 import { ragQuery } from "../rag/store.js";
 import { chatOnce } from "../llm/ollama.js";
 import { config } from "../config.js";
@@ -12,6 +12,9 @@ export async function registerChatRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", issues: parsed.error.issues });
 
     const reqBody = parsed.data;
+    if (reqBody.machineId) {
+      validateMachineAccess(reqBody.machineId);
+    }
     const lastUser = [...reqBody.messages].reverse().find((m) => m.role === "user");
     if (!lastUser) return reply.code(400).send({ error: "no_user_message" });
 
