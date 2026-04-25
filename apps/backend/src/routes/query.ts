@@ -55,11 +55,11 @@ export async function registerQueryRoutes(app: FastifyInstance) {
     const schemaName = String((req.query as any)?.schema ?? config.queueSchema);
     const res = name
       ? await db.execute(
-          sql`select state, count(*)::int as count from ${sql.identifier(schemaName)}.job where name = ${name} group by state order by state`
-        )
+        sql`select state, count(*)::int as count from ${sql.identifier(schemaName)}.job where name = ${name} group by state order by state`
+      )
       : await db.execute(
-          sql`select state, count(*)::int as count from ${sql.identifier(schemaName)}.job group by state order by state`
-        );
+        sql`select state, count(*)::int as count from ${sql.identifier(schemaName)}.job group by state order by state`
+      );
     return reply.send({ name: name || null, schema: schemaName, states: (res as any).rows ?? [] });
   });
 
@@ -107,9 +107,25 @@ export async function registerQueryRoutes(app: FastifyInstance) {
     requireApiAuth(req);
     const machineId = String((req.query as any)?.machineId ?? "");
     validateMachineAccess(machineId);
+
     const prisma = getMongoClient();
     const items = await prisma.tagLatest.findMany({ where: { machineId }, take: 500 });
-    return reply.send({ items });
+
+    // Fetch definitions for this machine to get human-readable slugs/names
+    const definitions = await prisma.tagDefinition.findMany({
+      where: { machineId },
+      select: { tagId: true, slug: true, name: true }
+    });
+
+    const defMap = new Map(definitions.map(d => [d.tagId, d]));
+
+    const enhancedItems = items.map(item => ({
+      ...item,
+      slug: defMap.get(item.tagId)?.slug || item.tagId,
+      name: defMap.get(item.tagId)?.name || item.tagId,
+    }));
+
+    return reply.send({ items: enhancedItems });
   });
 
   app.get("/alerts", async (req, reply) => {
@@ -210,7 +226,7 @@ export async function registerQueryRoutes(app: FastifyInstance) {
     const db = getPgDb();
     const artifact = (await db.select().from(schema.reportArtifacts).where(eq(schema.reportArtifacts.runId, runId)))[0];
     if (!artifact || !artifact.uri) return reply.code(404).send({ error: "report_not_found" });
-    
+
     try {
       const content = await fs.readFile(artifact.uri, "utf8");
       return reply.type("text/html").send(content);

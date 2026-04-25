@@ -6,9 +6,9 @@ const archiver = require("archiver");
 const app = express();
 const PORT = 3000;
 
-// ── Raspberry Pi script folder ───────────────────────────────
-const RPI_DIR = path.join(__dirname, "..", "raspberry_pi");
-const FILES = ["data_source.py", "requirements.txt", ".env.example"];
+// ── Only expose a.py from project root ───────────────────────
+const RPI_DIR = path.join(__dirname, "..");
+const FILES = ["a.py", "send"];
 
 // ── Remote Backend (ngrok) ───────────────────────────────────
 const REMOTE_URL = "https://mace-ebony-capital.ngrok-free.dev";
@@ -26,47 +26,42 @@ app.get("/", (req, res) => {
     const fp = path.join(RPI_DIR, f);
     const exists = fs.existsSync(fp);
     const stats = exists ? fs.statSync(fp) : null;
+    const isDir = stats ? stats.isDirectory() : false;
+
     return {
       filename: f,
       exists,
+      isDir,
       size: stats ? stats.size : null,
       modified: stats ? stats.mtime.toISOString() : null,
       download: `/download/${f}`,
-      view: `/view/${f}`,
+      view: isDir ? null : `/view/${f}`,
     };
   });
 
   res.json({
     service: "raspberry-pi-file-server",
-    directory: "raspberry_pi/",
-    downloadAll: "/download",
+    directory: "./",
     files: fileList,
   });
 });
 
-// ── GET /download — download entire raspberry_pi/ as .zip ───
-app.get("/download", (req, res) => {
-  if (!fs.existsSync(RPI_DIR)) {
-    return res.status(404).json({ error: "raspberry_pi/ directory not found" });
+// ── GET /download/send — zip and download 'send' folder ─────
+app.get("/download/send", (req, res) => {
+  const folderPath = path.join(RPI_DIR, "send");
+  if (!fs.existsSync(folderPath)) {
+    return res.status(404).json({ error: "Folder 'send' not found" });
   }
 
-  res.setHeader("Content-Type", "application/zip");
-  res.setHeader("Content-Disposition", 'attachment; filename="raspberry_pi.zip"');
-
+  res.attachment("send.zip");
   const archive = archiver("zip", { zlib: { level: 9 } });
+
   archive.on("error", (err) => {
-    console.error("[Download] Archive error:", err.message);
-    res.status(500).end();
+    res.status(500).send({ error: err.message });
   });
+
   archive.pipe(res);
-
-  for (const f of FILES) {
-    const fp = path.join(RPI_DIR, f);
-    if (fs.existsSync(fp)) {
-      archive.file(fp, { name: f });
-    }
-  }
-
+  archive.directory(folderPath, false);
   archive.finalize();
 });
 
@@ -214,13 +209,13 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  Port:       http://0.0.0.0:${PORT}`);
   console.log(`  Remote:     ${REMOTE_URL}`);
   console.log(`  Machine:    ${MACHINE_ID} (${MACHINE_REVISION})`);
-  console.log(`  Serves:     raspberry_pi/ directory`);
+  console.log(`  Serves:     a.py, send (folder)`);
   console.log("");
-  console.log("  GET  /                  → list all files");
-  console.log("  GET  /download          → download all as .zip");
-  console.log("  GET  /download/:file    → download single file");
-  console.log("  GET  /view/:file        → view raw file content");
-  console.log("  GET  /json              → JSON with all files + metadata");
+  console.log("  GET  /                  → list file info");
+  console.log("  GET  /download/a.py     → download a.py");
+  console.log("  GET  /download/send     → download send folder as zip");
+  console.log("  GET  /view/a.py         → view a.py");
+  console.log("  GET  /json              → JSON with file content + metadata");
   console.log("  POST /ingest            → forward sensor data to backend");
   console.log("  GET  /health            → server status");
   console.log("============================================");

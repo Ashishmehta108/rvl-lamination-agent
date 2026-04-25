@@ -26,7 +26,7 @@ export function validateMachineAccess(machineId: string) {
 
   // For now, we perform a sanity check. 
   // In the future, this would lookup the machine in the DB or check the JWT payload.
-  const allowedPrefixes = ["machine_", "line_"];
+  const allowedPrefixes = ["machine_", "line_", "lamination-"];
   const isValid = allowedPrefixes.some(p => machineId.startsWith(p));
 
   if (!isValid) {

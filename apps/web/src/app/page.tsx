@@ -14,7 +14,7 @@ import { useDashboard } from "../hooks/useDashboard";
 import { api } from "../lib/api";
 
 export default function HomePage() {
-  const [machineId, setMachineId] = useState("machine_1");
+  const [machineId, setMachineId] = useState("lamination-01");
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   
   const { items, alerts, reports, history, mutateReports } = useDashboard(machineId);
@@ -45,10 +45,11 @@ export default function HomePage() {
   };
 
   const stats = useMemo(() => {
-    const temp1 = items.find(i => i.tagId === 'roller_temp_01')?.valueNumber ?? 0;
-    const temp2 = items.find(i => i.tagId === 'roller_temp_02')?.valueNumber ?? 0;
-    const speed = items.find(i => i.tagId === 'line_speed')?.valueNumber ?? 0;
-    const pressure = items.find(i => i.tagId === 'nip_pressure')?.valueNumber ?? 0;
+    // Try to find by slug first, then fallback to hardcoded defaults
+    const temp1 = items.find(i => i.slug === 'EXTRUDER_RPM' || i.tagId === 'roller_temp_01')?.valueNumber ?? 0;
+    const temp2 = items.find(i => i.slug === 'LAMINATOR_AMP' || i.tagId === 'roller_temp_02')?.valueNumber ?? 0;
+    const speed = items.find(i => i.slug === 'LAMINATOR_MPM' || i.tagId === 'line_speed')?.valueNumber ?? 0;
+    const pressure = items.find(i => i.slug === 'WINDER_AMP' || i.tagId === 'nip_pressure')?.valueNumber ?? 0;
     return { 
       avgTemp: ((temp1 + temp2) / 2).toFixed(1), 
       speed: speed.toFixed(1), 
@@ -105,8 +106,8 @@ export default function HomePage() {
                   <XAxis dataKey="t" hide />
                   <YAxis fontSize={9} stroke="var(--text-faint)" axisLine={false} tickLine={false} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Area type="monotone" dataKey="roller_temp_01" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.03} strokeWidth={1.2} />
-                  <Area type="monotone" dataKey="roller_temp_02" stroke="var(--text-muted)" fill="transparent" strokeWidth={1} strokeDasharray="4 2" />
+                  <Area type="monotone" dataKey="EXTRUDER_RPM" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.03} strokeWidth={1.2} />
+                  <Area type="monotone" dataKey="LAMINATOR_AMP" stroke="var(--text-muted)" fill="transparent" strokeWidth={1} strokeDasharray="4 2" />
                 </AreaChart>
               </ResponsiveContainer>
             </ChartCard>
@@ -116,7 +117,7 @@ export default function HomePage() {
                 <ResponsiveContainer width="100%" height={140}>
                   <AreaChart data={history}>
                     <Tooltip content={<CustomTooltip />} />
-                    <Area type="step" dataKey="nip_pressure" stroke="var(--text-muted)" fill="var(--surface-2)" strokeWidth={1} />
+                    <Area type="step" dataKey="WINDER_AMP" stroke="var(--text-muted)" fill="var(--surface-2)" strokeWidth={1} />
                   </AreaChart>
                 </ResponsiveContainer>
               </ChartCard>
@@ -124,7 +125,7 @@ export default function HomePage() {
                 <ResponsiveContainer width="100%" height={140}>
                   <AreaChart data={history}>
                     <Tooltip content={<CustomTooltip />} />
-                    <Area type="monotone" dataKey="line_speed" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.05} strokeWidth={1} />
+                    <Area type="monotone" dataKey="LAMINATOR_MPM" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.05} strokeWidth={1} />
                   </AreaChart>
                 </ResponsiveContainer>
               </ChartCard>

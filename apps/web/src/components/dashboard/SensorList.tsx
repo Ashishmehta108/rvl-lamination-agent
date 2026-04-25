@@ -20,7 +20,7 @@ export default function SensorList({ items }: SensorListProps) {
             padding: "8px 4px", 
             borderBottom: "1px solid var(--border-subtle)"
           }}>
-            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{item.tagId}</span>
+            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{item.slug || item.tagId}</span>
             <span style={{ fontSize: 12, fontFamily: "monospace", color: "var(--text)" }}>
               {item.valueNumber?.toFixed(2) ?? String(item.valueBool ?? item.valueString ?? "—")}
             </span>
