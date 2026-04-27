@@ -4,10 +4,18 @@ import { api } from "../lib/api";
 const STORE_KEY = "rvl-conversations";
 
 export type Role = "user" | "assistant";
+export interface ToolStep {
+  tool: string;
+  label: string;
+  durationMs: number;
+}
+
 export interface Message {
   role: Role;
   content: string;
   citations?: { index: number; chunkId: string; sourceUri: string | null }[];
+  steps?: ToolStep[];
+  grounded?: boolean;
   error?: boolean;
 }
 
@@ -53,7 +61,7 @@ export function useChat() {
     const c: Conversation = {
       id,
       title: "New conversation",
-      machineId: "machine_1",
+      machineId: "lamination-01",
       messages: [],
       createdAt: Date.now(),
       updatedAt: Date.now()
@@ -102,15 +110,17 @@ export function useChat() {
 
     try {
       // Use the current state or a fallback
-      const data = await api.post<{ answer: string; citations: any[] }>(`/chat`, {
-        machineId: active?.machineId || "machine_1",
+      const data = await api.post<{ answer: string; citations: any[]; grounded: boolean; steps?: ToolStep[] }>(`/chat`, {
+        machineId: active?.machineId || "lamination-01",
         messages: [...(active?.messages || []), userMsg].filter(m => !m.error).map(m => ({ role: m.role, content: m.content }))
       });
 
       const assistantMsg: Message = {
         role: "assistant",
         content: data.answer,
-        citations: data.citations
+        citations: data.citations,
+        steps: data.steps,
+        grounded: data.grounded
       };
 
       setConversations(prev => prev.map(c => 

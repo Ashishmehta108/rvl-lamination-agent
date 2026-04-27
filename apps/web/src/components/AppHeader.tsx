@@ -31,19 +31,20 @@ export default function AppHeader({
       position: "sticky",
       top: 0,
       zIndex: 40,
-      height: 54,
+      minHeight: 54,
       background: "var(--surface)",
       borderBottom: "1px solid var(--border)",
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
-      padding: "0 20px",
-      gap: 12,
+      flexWrap: "wrap",
+      padding: "8px 20px",
+      gap: 8,
       boxShadow: "var(--shadow)",
     }}>
 
       {/* ── Left ──────────────────────────────────── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: "1 1 180px", overflow: "hidden" }}>
         {backHref != null && (
           <>
             <a
@@ -104,7 +105,7 @@ export default function AppHeader({
       </div>
 
       {/* ── Right ─────────────────────────────────── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+      <div className="rvl-header-right" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flex: "0 1 auto" }}>
         {rightSlot}
 
         {/* Theme toggle */}

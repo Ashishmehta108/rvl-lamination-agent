@@ -21,7 +21,8 @@
     "db:mongo:generate": "npm run prisma:generate -w packages/db-mongo",
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:stop": "pm2 stop rvl-backend || true",
-    "pm2:logs": "pm2 logs rvl-backend"
+    "pm2:logs": "pm2 logs rvl-backend",
+    "sim": "npm run simulate -w apps/backend"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

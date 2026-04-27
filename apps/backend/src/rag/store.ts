@@ -27,7 +27,11 @@ async function getTable() {
           chunkId: "seed",
           documentId: "seed",
           text: "seed",
-          embedding: [0, 0, 0],
+          embedding: new Array(768).fill(0), // must match nomic-embed-text output dim
+          machineId: "__seed__",
+          tagIds: ["__seed__"],
+          sourceType: "seed",
+          sourceUri: "seed",
           createdAt: new Date().toISOString()
         }
       ]);
@@ -43,7 +47,7 @@ export async function ragQuery(args: { query: string; machineId?: string; tagIds
 
   // LanceDB query API returns an async builder; keep minimal and tolerant across versions.
   let builder: any = table.search(qEmb).limit(args.topK);
-  if (args.machineId) builder = builder.where(`machineId = '${args.machineId.replaceAll("'", "''")}'`);
+  if (args.machineId) builder = builder.where(`"machineId" = '${args.machineId.replaceAll("'", "''")}'`);
   const out = await builder.toArray();
   return (out as ChunkRow[]).map((r) => ({ chunkId: r.chunkId, text: r.text, sourceUri: r.sourceUri }));
 }

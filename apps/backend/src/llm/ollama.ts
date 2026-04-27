@@ -58,6 +58,8 @@ export async function chatOnce(messages: LlmMessage[]): Promise<string> {
       stream: false,
       options: {
         temperature: config.ollamaTemperature,
+        top_p: config.ollamaTopP,
+        repeat_penalty: config.ollamaRepeatPenalty,
         num_ctx: config.ollamaNumCtx
       },
       keep_alive: config.ollamaKeepAlive

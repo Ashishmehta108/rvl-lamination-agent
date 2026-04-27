@@ -145,57 +145,57 @@ export class ModbusReader {
     this.connected = false;
   }
 
-  async readAllTags(): Promise<{ timestamp: string; tags: any }> {
-    const timestamp = new Date().toISOString();
-    
-    if (config.SIMULATION_MODE) {
-      return { timestamp, tags: generateSimulatedSnapshot() };
-    }
+    async readAllTags(): Promise<{ timestamp: string; tags: any }> {
+      const timestamp = new Date().toISOString();
+      
+      if (config.SIMULATION_MODE) {
+        return { timestamp, tags: generateSimulatedSnapshot() };
+      }
 
-    if (!this.connected || !this.client) {
-      throw new Error("Modbus client not connected");
-    }
+      if (!this.connected || !this.client) {
+        throw new Error("Modbus client not connected");
+      }
 
-    const tags: any = {};
-    for (const [name, cfg] of Object.entries(TAGS)) {
-      try {
-        let val: number | boolean | null = null;
-        
-        if (cfg.fc === 3) {
-          if (cfg.type === "float") {
-            const base = cfg.addr - 400001;
-            const res = await this.client.readHoldingRegisters(base, 2);
-            // Convert 2 uint16s to float32
-            const buf = Buffer.alloc(4);
-            buf.writeUInt16BE(res.data[0], 0);
-            buf.writeUInt16BE(res.data[1], 2);
-            val = buf.readFloatBE(0);
-          } else {
-            const base = cfg.addr - 400001;
-            const res = await this.client.readHoldingRegisters(base, 1);
+      const tags: any = {};
+      for (const [name, cfg] of Object.entries(TAGS)) {
+        try {
+          let val: number | boolean | null = null;
+          
+          if (cfg.fc === 3) {
+            if (cfg.type === "float") {
+              const base = cfg.addr - 400001;
+              const res = await this.client.readHoldingRegisters(base, 2);
+              // Convert 2 uint16s to float32
+              const buf = Buffer.alloc(4);
+              buf.writeUInt16BE(res.data[0], 0);
+              buf.writeUInt16BE(res.data[1], 2);
+              val = buf.readFloatBE(0);
+            } else {
+              const base = cfg.addr - 400001;
+              const res = await this.client.readHoldingRegisters(base, 1);
+              val = res.data[0];
+            }
+          } else if (cfg.fc === 4) {
+            const base = cfg.addr - 300001;
+            const res = await this.client.readInputRegisters(base, 1);
+            const v = res.data[0];
+            val = v < 32768 ? v : v - 65536; // signed short
+          } else if (cfg.fc === 1) {
+            const base = cfg.addr - 1;
+            const res = await this.client.readCoils(base, 1);
             val = res.data[0];
           }
-        } else if (cfg.fc === 4) {
-          const base = cfg.addr - 300001;
-          const res = await this.client.readInputRegisters(base, 1);
-          const v = res.data[0];
-          val = v < 32768 ? v : v - 65536; // signed short
-        } else if (cfg.fc === 1) {
-          const base = cfg.addr - 1;
-          const res = await this.client.readCoils(base, 1);
-          val = res.data[0];
+
+          tags[name] = {
+            value: typeof val === "number" ? Number(val.toFixed(3)) : val,
+            label: cfg.label,
+            unit: cfg.unit
+          };
+        } catch (err: any) {
+          tags[name] = { value: null, label: cfg.label, unit: cfg.unit, error: err.message };
         }
-
-        tags[name] = {
-          value: typeof val === "number" ? Number(val.toFixed(3)) : val,
-          label: cfg.label,
-          unit: cfg.unit
-        };
-      } catch (err: any) {
-        tags[name] = { value: null, label: cfg.label, unit: cfg.unit, error: err.message };
       }
-    }
 
-    return { timestamp, tags };
-  }
+      return { timestamp, tags };
+    }
 }

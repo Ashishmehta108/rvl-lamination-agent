@@ -22,7 +22,7 @@ async function main() {
     await app.register(cors, { origin: true });
   }
   await app.register(rateLimit, {
-    max: 300,
+    max: 1000,
     timeWindow: "1 minute"
   });
   await app.register(websocket);

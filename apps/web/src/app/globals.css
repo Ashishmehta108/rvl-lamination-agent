@@ -100,3 +100,120 @@ body {
   transition-duration: .2s;
   transition-timing-function: ease;
 }
+/* ── Live dot ───────────────────────────────────────────────────────────── */
+.rvl-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 0 rgba(34,197,94,.5);
+  animation: rvl-pulse 2s ease-in-out infinite;
+}
+
+@keyframes rvl-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(34,197,94,.5); }
+  70%  { box-shadow: 0 0 0 5px rgba(34,197,94,0); }
+  100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+}
+
+/* ── Scrollbar — hidden but functional ──────────────────────────────────── */
+.rvl-scroll-hidden {
+  overflow-y: auto;
+  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style: none;     /* IE */
+}
+.rvl-scroll-hidden::-webkit-scrollbar { display: none; } /* Chrome/Safari */
+
+/* ── Value flash animation ───────────────────────────────────────────────── */
+@keyframes rvl-flash {
+  0%   { color: var(--accent); }
+  100% { color: inherit; }
+}
+.rvl-flash { animation: rvl-flash 0.6s ease; }
+
+/* ── Responsive layout helpers ───────────────────────────────────────────── */
+.rvl-grid-kpi {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.rvl-grid-main {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 20px;
+}
+
+.rvl-grid-3col {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.rvl-grid-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 1024px) {
+  .rvl-grid-main {
+    grid-template-columns: 1fr;
+  }
+  .rvl-grid-3col {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .rvl-grid-kpi   { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .rvl-grid-main  { grid-template-columns: 1fr; gap: 16px; }
+  .rvl-grid-3col  { grid-template-columns: 1fr; }
+  .rvl-grid-2col  { grid-template-columns: 1fr; }
+
+  main { padding: 16px 12px 40px !important; }
+
+  .rvl-hide-mobile { display: none !important; }
+
+  /* Header */
+  .rvl-header-right .rvl-header-asset { display: none; }
+
+  /* Sensor grid: 2-col card layout on mobile */
+  .rvl-sensor-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+}
+
+/* ── Sensor card layout ───────────────────────────────────────────────────── */
+/* Desktop: transparent pass-through — rows render as plain list rows        */
+.rvl-sensor-grid { display: contents; }
+
+.rvl-sensor-card {
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 5px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+@media (max-width: 640px) {
+  .rvl-sensor-grid {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .rvl-sensor-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .rvl-sensor-cat-header { display: none; }
+}

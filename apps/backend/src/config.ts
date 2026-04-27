@@ -45,16 +45,18 @@ export const config = {
 
   // Local LLM via Ollama
   ollamaBaseUrl: getEnv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
-  ollamaModel: getEnv("OLLAMA_MODEL", "phi4-mini"),
-  ollamaNumCtx: getEnvNum("OLLAMA_NUM_CTX", 4096),
+  ollamaModel: getEnv("OLLAMA_MODEL", "llama3.2:1b"),
+  ollamaNumCtx: getEnvNum("OLLAMA_NUM_CTX", 2048),
   ollamaTemperature: getEnvNum("OLLAMA_TEMPERATURE", 0),
+  ollamaTopP: getEnvNum("OLLAMA_TOP_P", 0.9),
+  ollamaRepeatPenalty: getEnvNum("OLLAMA_REPEAT_PENALTY", 1.15),
   ollamaKeepAlive: getEnv("OLLAMA_KEEP_ALIVE", "30s"),
-  llmTimeoutMs: getEnvNum("LLM_TIMEOUT_MS", 25_000),
+  llmTimeoutMs: getEnvNum("LLM_TIMEOUT_MS", 120_000),
 
   // RAG
   ragDbDir: getEnv("RAG_DB_DIR", "./data/rag"),
   embedModel: getEnv("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
-  ragTopK: getEnvNum("RAG_TOP_K", 6),
+  ragTopK: getEnvNum("RAG_TOP_K", 4),
 
   // Security
   mcpAuthToken: getEnv("MCP_AUTH_TOKEN", "dev-local-token"),

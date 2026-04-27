@@ -2,11 +2,11 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Flash, SidebarLeft, Cpu } from "iconsax-reactjs";
-import AppHeader from "../../components/AppHeader";
-import ChatSidebar from "../../components/chat/ChatSidebar";
-import MessageItem from "../../components/chat/MessageItem";
-import ChatInput from "../../components/chat/ChatInput";
-import { useChat } from "../../hooks/useChat";
+import AppHeader from "@/components/AppHeader";
+import ChatSidebar from "@/components/chat/ChatSidebar";
+import MessageItem from "@/components/chat/MessageItem";
+import ChatInput from "@/components/chat/ChatInput";
+import { useChat } from "@/hooks/useChat";
 
 const SUGGESTED = [
   "What alerts fired today on this machine?",
@@ -15,9 +15,9 @@ const SUGGESTED = [
 ];
 
 export default function ChatPage() {
-  const { 
-    conversations, active, activeId, setActiveId, loading, 
-    startNewChat, deleteConversation, updateMachineId, sendMessage 
+  const {
+    conversations, active, activeId, setActiveId, loading,
+    startNewChat, deleteConversation, updateMachineId, sendMessage
   } = useChat();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -80,10 +80,10 @@ export default function ChatPage() {
                   </button>
                 )}
                 <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Machine</span>
-                <input 
-                  value={active?.machineId ?? "machine_1"} 
-                  onChange={e => updateMachineId(e.target.value)} 
-                  style={{ width: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, padding: "4px 9px", fontSize: 12, color: "var(--text)", outline: "none", fontFamily: "monospace" }} 
+                <input
+                  value={active?.machineId ?? "machine_1"}
+                  onChange={e => updateMachineId(e.target.value)}
+                  style={{ width: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, padding: "4px 9px", fontSize: 12, color: "var(--text)", outline: "none", fontFamily: "monospace" }}
                 />
               </div>
             }
@@ -115,12 +115,12 @@ export default function ChatPage() {
                   <MessageItem key={i} msg={msg} isLast={i === msgs.length - 1} />
                 ))}
                 {loading && (
-                   <div className="rvl-msg" style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "4px 0" }}>
-                      <div style={{ flexShrink: 0, marginTop: 3, width: 26, height: 26, borderRadius: 7, background: "var(--accent-faint)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <Cpu size={13} color="var(--accent)" variant="Bulk" />
-                      </div>
-                      <div style={{ paddingTop: 10 }}><TypingDots /></div>
+                  <div className="rvl-msg" style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "4px 0" }}>
+                    <div style={{ flexShrink: 0, marginTop: 3, width: 26, height: 26, borderRadius: 7, background: "var(--accent-faint)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <Cpu size={13} color="var(--accent)" variant="Bulk" />
                     </div>
+                    <ThinkingIndicator />
+                  </div>
                 )}
                 <div ref={bottomRef} style={{ height: 4 }} />
               </div>
@@ -140,10 +140,53 @@ export default function ChatPage() {
   );
 }
 
+const THINKING_STEPS = [
+  { label: "Searching documents" },
+  { label: "Querying databases" },
+  { label: "Generating response" },
+];
+
+function ThinkingIndicator() {
+  const [step, setStep] = useState(0);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      setStep(s => (s < THINKING_STEPS.length - 1 ? s + 1 : s));
+    }, 2000);
+    return () => clearInterval(t);
+  }, []);
+
+  return (
+    <div style={{ paddingTop: 6, paddingLeft: 2, display: "flex", flexDirection: "column", gap: 0 }}>
+      {THINKING_STEPS.slice(0, step + 1).map((s, i) => (
+        <div
+          key={i}
+          style={{
+            display: "flex", alignItems: "center", gap: 10, fontSize: 12,
+            color: i === step ? "var(--text-muted)" : "var(--text-faint)",
+            animation: "rvl-fadein .25s ease both",
+            padding: "3px 0",
+          }}
+        >
+          {/* Step indicator dot */}
+          <div style={{
+            width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+            background: i < step ? "#22c55e" : i === step ? "var(--accent)" : "var(--border)",
+            transition: "background .3s",
+            boxShadow: i === step ? "0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent)" : "none"
+          }} />
+          <span>{s.label}</span>
+          {i === step && <TypingDots />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TypingDots() {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, height: 20 }}>
-      {[0, 1, 2].map(n => <span key={n} style={{ display: "inline-block", width: 5, height: 5, borderRadius: "50%", background: "var(--text-faint)", animation: "rvl-bounce 1.3s ease-in-out infinite", animationDelay: `${n * 0.18}s` }} />)}
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, height: 16, marginLeft: 2 }}>
+      {[0, 1, 2].map(n => <span key={n} style={{ display: "inline-block", width: 3, height: 3, borderRadius: "50%", background: "var(--text-faint)", animation: "rvl-bounce 1.3s ease-in-out infinite", animationDelay: `${n * 0.18}s` }} />)}
     </span>
   );
 }
