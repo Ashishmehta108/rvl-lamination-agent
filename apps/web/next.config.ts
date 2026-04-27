@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "standalone"
+  output: "standalone",
+  async redirects() {
+    return [{ source: "/assistant", destination: "/chat", permanent: false }];
+  }
 };
 
 export default nextConfig;

@@ -10,6 +10,19 @@ export interface ToolStep {
   durationMs: number;
 }
 
+export interface ContextBlock {
+  source: string;
+  preview: string;
+}
+
+export interface FindCandidateChip {
+  tagId: string;
+  slug: string;
+  name: string;
+  unit: string | null;
+  score: number;
+}
+
 export interface Message {
   role: Role;
   content: string;
@@ -17,12 +30,18 @@ export interface Message {
   steps?: ToolStep[];
   grounded?: boolean;
   error?: boolean;
+  contextBlocks?: ContextBlock[];
+  liveTagCount?: number;
+  /** Tag candidates from server-side find_tags (for UI chips). */
+  findCandidates?: FindCandidateChip[];
 }
 
 export interface Conversation {
   id: string;
   title: string;
   machineId: string;
+  /** Optional tag ids always injected into assistant context */
+  tagIds?: string[];
   messages: Message[];
   createdAt: number;
   updatedAt: number;
@@ -110,17 +129,34 @@ export function useChat() {
 
     try {
       // Use the current state or a fallback
-      const data = await api.post<{ answer: string; citations: any[]; grounded: boolean; steps?: ToolStep[] }>(`/chat`, {
-        machineId: active?.machineId || "lamination-01",
-        messages: [...(active?.messages || []), userMsg].filter(m => !m.error).map(m => ({ role: m.role, content: m.content }))
-      });
+      const conv = conversations.find(c => c.id === convId);
+      const history = [...(conv?.messages ?? []), userMsg].filter(m => !m.error).map(m => ({ role: m.role, content: m.content }));
+      const body: Record<string, unknown> = {
+        machineId: conv?.machineId || "lamination-01",
+        messages: history
+      };
+      const tid = conv?.tagIds?.filter(Boolean);
+      if (tid && tid.length) body.tagIds = tid;
+
+      const data = await api.post<{
+        answer: string;
+        citations: any[];
+        grounded: boolean;
+        steps?: ToolStep[];
+        contextBlocks?: ContextBlock[];
+        liveTagCount?: number;
+        findCandidates?: FindCandidateChip[];
+      }>(`/chat`, body);
 
       const assistantMsg: Message = {
         role: "assistant",
         content: data.answer,
         citations: data.citations,
         steps: data.steps,
-        grounded: data.grounded
+        grounded: data.grounded,
+        contextBlocks: data.contextBlocks,
+        liveTagCount: data.liveTagCount,
+        findCandidates: data.findCandidates
       };
 
       setConversations(prev => prev.map(c => 

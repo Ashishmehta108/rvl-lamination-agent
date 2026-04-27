@@ -26,6 +26,8 @@ export interface ReportRun {
   id: string;
   status: string;
   createdAt: string;
+  windowStart?: string;
+  windowEnd?: string;
   metrics?: any;
 }
 
@@ -64,8 +66,8 @@ export function useDashboard(machineId: string) {
   );
 
   const { data: reportsData, error: reportsError, mutate: mutateReports } = useSWR(
-    [`/reports/runs`, machineId],
-    () => api.get<{ items: ReportRun[] }>(`/reports/runs`, { machineId }),
+    [`/reports/runs`, machineId, "8"],
+    () => api.get<{ items: ReportRun[] }>(`/reports/runs`, { machineId, limit: "8" }),
     { refreshInterval: 10000 }
   );
 

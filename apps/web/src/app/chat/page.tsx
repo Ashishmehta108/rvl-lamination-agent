@@ -14,6 +14,8 @@ const SUGGESTED = [
   "What does low nip pressure usually mean?"
 ];
 
+const CHAT_MODEL_LABEL = process.env.NEXT_PUBLIC_OLLAMA_MODEL_LABEL ?? "llama3.2:1b";
+
 export default function ChatPage() {
   const {
     conversations, active, activeId, setActiveId, loading,
@@ -21,9 +23,22 @@ export default function ChatPage() {
   } = useChat();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
   const [search, setSearch] = useState("");
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 768px)");
+    const apply = () => {
+      const m = mq.matches;
+      setIsMobile(m);
+      if (m) setSidebarOpen(false);
+    };
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -54,23 +69,53 @@ export default function ChatPage() {
         .rvl-sidebar { transition: width .22s cubic-bezier(.4,0,.2,1), opacity .2s }
       `}</style>
 
-      <div style={{ display: "flex", height: "100vh", background: "var(--bg)", overflow: "hidden" }}>
+      <div className="rvl-chat-layout" style={{ display: "flex", height: "100dvh", background: "var(--bg)", overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom, 0)" }}>
+        {isMobile && sidebarOpen ? (
+          <button
+            type="button"
+            aria-label="Close conversation list"
+            onClick={() => setSidebarOpen(false)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 45,
+              border: "none",
+              margin: 0,
+              padding: 0,
+              background: "rgba(15,14,12,0.42)",
+              cursor: "pointer"
+            }}
+          />
+        ) : null}
         <ChatSidebar
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
-          onNewChat={startNewChat}
+          onNewChat={() => {
+            startNewChat();
+            if (isMobile) setSidebarOpen(false);
+          }}
           search={search}
           onSearchChange={setSearch}
           conversations={conversations}
           activeId={activeId}
-          onSelect={setActiveId}
+          onSelect={(id) => {
+            setActiveId(id);
+            if (isMobile) setSidebarOpen(false);
+          }}
           onDelete={deleteConversation}
+          layout={isMobile ? "overlay" : "docked"}
         />
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
           <AppHeader
+            backHref="/"
+            backLabel="Dashboard"
             title={active?.title ?? "RAG Assistant"}
-            subtitle={active ? `${active.machineId} · phi4-mini · Ollama` : "RVL Lamination · Ollama + RAG"}
+            subtitle={
+              active
+                ? `${active.machineId} · ${CHAT_MODEL_LABEL} · RAG`
+                : `RVL Lamination · ${CHAT_MODEL_LABEL} · RAG`
+            }
             icon={<Flash size={14} color="var(--accent)" variant="Bulk" />}
             rightSlot={
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -85,6 +130,24 @@ export default function ChatPage() {
                   onChange={e => updateMachineId(e.target.value)}
                   style={{ width: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, padding: "4px 9px", fontSize: 12, color: "var(--text)", outline: "none", fontFamily: "monospace" }}
                 />
+                <button
+                  type="button"
+                  title="Ask about open and recent alerts"
+                  onClick={() => handleSend("Show open alerts and any alerts closed in the last 24 hours for this machine.")}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    background: "var(--surface-2)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    padding: "4px 10px",
+                    color: "var(--accent)",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Alerts
+                </button>
               </div>
             }
           />

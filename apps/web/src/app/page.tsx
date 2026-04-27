@@ -6,6 +6,7 @@ import {
   XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   ReferenceLine, Legend,
 } from "recharts";
+import Link from "next/link";
 import { Cpu, DocumentText } from "iconsax-reactjs";
 
 import AppHeader    from "../components/AppHeader";
@@ -61,6 +62,17 @@ export default function HomePage() {
       document.body.appendChild(a); a.click();
       window.URL.revokeObjectURL(url);
     } catch { alert("Failed to load report."); }
+  };
+
+  const emailBadge = (m: any) => {
+    if (!m || typeof m !== "object") return null;
+    if (m.emailSent === true) {
+      return <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "color-mix(in srgb, #22c55e 15%, transparent)", color: "#16a34a" }}>Emailed</span>;
+    }
+    if (m.emailError) {
+      return <span title={String(m.emailError)} style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "color-mix(in srgb, #f87171 15%, transparent)", color: "#b91c1c" }}>Email failed</span>;
+    }
+    return null;
   };
 
   return (
@@ -227,8 +239,13 @@ export default function HomePage() {
 
             {/* Reports */}
             <div>
-              <h3 style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 7 }}>
-                <DocumentText size={13} /> Recent Reports
+              <h3 style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 7, justifyContent: "space-between", flexWrap: "wrap" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+                  <DocumentText size={13} /> Recent Reports
+                </span>
+                <Link href={`/reports?machineId=${encodeURIComponent(machineId)}`} style={{ fontSize: 11, fontWeight: 500, color: "var(--accent)", textDecoration: "none" }}>
+                  View all →
+                </Link>
               </h3>
               <div className="rvl-card" style={{ padding: 0 }}>
                 {reports.length === 0 ? (
@@ -243,9 +260,15 @@ export default function HomePage() {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                       <span style={{ fontSize: 11, color: "var(--text-faint)" }}>{r.metrics?.alerts ?? 0} alerts</span>
+                      {emailBadge(r.metrics)}
                       <span style={{ fontSize: 10, background: "var(--surface-2)", padding: "2px 7px", borderRadius: 4 }}>{r.status}</span>
                       {r.status === "succeeded" && (
-                        <button onClick={() => viewReport(r.id)} style={{ fontSize: 11, color: "var(--accent)", border: "none", background: "none", cursor: "pointer", fontWeight: 500 }}>View</button>
+                        <>
+                          <Link href={`/reports/${encodeURIComponent(r.id)}?machineId=${encodeURIComponent(machineId)}`} style={{ fontSize: 11, color: "var(--accent)", fontWeight: 500, textDecoration: "none" }}>
+                            Open
+                          </Link>
+                          <button type="button" onClick={() => viewReport(r.id)} style={{ fontSize: 11, color: "var(--text-muted)", border: "none", background: "none", cursor: "pointer", fontWeight: 500 }}>Download</button>
+                        </>
                       )}
                     </div>
                   </div>

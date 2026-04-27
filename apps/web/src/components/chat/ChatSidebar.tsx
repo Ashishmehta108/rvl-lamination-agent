@@ -12,12 +12,25 @@ interface ChatSidebarProps {
   activeId: string | null;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
+  /** Narrow screens: fixed drawer over content */
+  layout?: "docked" | "overlay";
 }
 
 export default function ChatSidebar({
-  open, onClose, onNewChat, search, onSearchChange, conversations, activeId, onSelect, onDelete
+  open,
+  onClose,
+  onNewChat,
+  search,
+  onSearchChange,
+  conversations,
+  activeId,
+  onSelect,
+  onDelete,
+  layout = "docked"
 }: ChatSidebarProps) {
   if (!open) return null;
+
+  const overlay = layout === "overlay";
 
   const groupByDate = (convs: Conversation[]) => {
     const now = Date.now();
@@ -41,9 +54,29 @@ export default function ChatSidebar({
   const groups = groupByDate(filtered);
 
   return (
-    <aside className="rvl-sidebar" style={{
-      width: 252, flexShrink: 0, overflow: "hidden", display: "flex", flexDirection: "column", background: "var(--surface)", borderRight: "1px solid var(--border)"
-    }}>
+    <aside
+      className="rvl-sidebar"
+      style={{
+        width: 252,
+        flexShrink: 0,
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+        background: "var(--surface)",
+        borderRight: "1px solid var(--border)",
+        ...(overlay
+          ? {
+              position: "fixed" as const,
+              left: 0,
+              top: 0,
+              height: "100dvh",
+              zIndex: 50,
+              boxShadow: "8px 0 32px rgba(0,0,0,0.14)",
+              maxWidth: "min(280px, 88vw)"
+            }
+          : {})
+      }}
+    >
       <div style={{ padding: "14px 12px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
         <button onClick={onNewChat} style={{
           flex: 1, display: "flex", alignItems: "center", gap: 7, background: "var(--accent)", border: "none", borderRadius: 7,

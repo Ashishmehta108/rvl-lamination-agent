@@ -12,6 +12,9 @@ const DEFINITIONS_URL_BASE = process.env.SIM_DEFINITIONS_BASE_URL ?? "http://127
 const AUTH_TOKEN = process.env.SIM_AUTH_TOKEN ?? "dev-local-token";
 const MACHINE_ID = process.env.SIM_MACHINE_ID ?? "lamination-01";
 const MACHINE_REVISION = process.env.SIM_REVISION ?? "v1";
+/** Every N ingest cycles, push WINDER_TENSION_PCT above alarmHigh briefly so threshold alerts fire for report testing */
+const SIM_INJECT_ALERTS = process.env.SIM_INJECT_ALERTS === "1";
+const INJECT_EVERY = Math.max(3, Number(process.env.SIM_INJECT_ALERTS_EVERY ?? "12") || 12);
 
 // ── Tag definitions matching real PLC tags from a.py ──
 const TAGS = [
@@ -137,22 +140,31 @@ async function runSimulation() {
   console.log(`  Machine:  ${MACHINE_ID} (${MACHINE_REVISION})`);
   console.log(`  Target:   ${API_URL}`);
   console.log(`  Tags:     ${TAGS.length}`);
-  console.log(`  Interval: 5s\n`);
+  console.log(`  Interval: 5s`);
+  if (SIM_INJECT_ALERTS) console.log(`  SIM_INJECT_ALERTS: on (every ${INJECT_EVERY} cycles → WINDER_TENSION_PCT spike)`);
+  console.log("");
 
   while (true) {
     const now = new Date().toISOString();
 
     // Build payload matching a.py format (tagSlug, not tagId)
+    const tagsPayload = TAGS.map((t) => ({
+      tagSlug: t.slug,
+      value: generateValue(t),
+      ts: now
+    }));
+
+    if (SIM_INJECT_ALERTS && seq % INJECT_EVERY === 0) {
+      const tension = tagsPayload.find((x) => x.tagSlug === "WINDER_TENSION_PCT");
+      if (tension) tension.value = 98;
+    }
+
     const batch = {
       machineId: MACHINE_ID,
       machineRevision: MACHINE_REVISION,
       sentAt: now,
       seq: seq++,
-      tags: TAGS.map(t => ({
-        tagSlug: t.slug,
-        value: generateValue(t),
-        ts: now
-      }))
+      tags: tagsPayload
     };
 
     try {

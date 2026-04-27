@@ -117,7 +117,11 @@ SENT_KEEP_HOURS  = float(os.getenv("SENT_KEEP_HOURS", "24.0"))
 POLL_BACKOFF_BASE = float(os.getenv("POLL_BACKOFF_BASE", "1.0"))
 POLL_BACKOFF_MAX  = float(os.getenv("POLL_BACKOFF_MAX", "30.0"))
 POLL_JITTER_MAX   = float(os.getenv("POLL_JITTER_MAX", "0.2"))
-MIN_SUCCESS_TAGS  = int(os.getenv("MIN_SUCCESS_TAGS", "8"))
+
+# FIX: Lowered default from 8 → 3 to avoid false "offline" during partial reads.
+# Raise back to 8 (or higher) once all registers are confirmed working on your PLC.
+MIN_SUCCESS_TAGS  = int(os.getenv("MIN_SUCCESS_TAGS", "3"))
+
 REQUIRED_LIVE_TAGS = [
     s.strip() for s in os.getenv(
         "REQUIRED_LIVE_TAGS",
@@ -198,7 +202,10 @@ TAGS: dict[str, TagConfig] = {
     "WINDER_ON_OFF":       TagConfig(addr=102,    type="bool",   fc=1),
     "WINDER_FAULT":        TagConfig(addr=14,     type="bool",   fc=1),
     "WINDER_TENSION_VOL":  TagConfig(addr=401040, type="float",  fc=3),
-    "MASTER_SPEED_PCT":    TagConfig(addr=400000, type="uint16", fc=3),
+    # FIX: was 400000 (invalid — maps to offset -1). Corrected to 400001.
+    # If MASTER_SPEED_PCT lives at a different physical register on your PLC,
+    # update this address to match your hardware documentation.
+    "MASTER_SPEED_PCT":    TagConfig(addr=400001, type="uint16", fc=3),
     "UW_SET_TENSION":      TagConfig(addr=403502, type="uint16", fc=3),
     "UW_PV_TENSION":       TagConfig(addr=403880, type="uint16", fc=3),
     "RUNNING_METER":       TagConfig(addr=400008, type="float",  fc=3),

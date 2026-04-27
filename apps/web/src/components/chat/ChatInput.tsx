@@ -9,6 +9,8 @@ interface ChatInputProps {
   placeholder?: string;
 }
 
+const MODEL_FOOTER = process.env.NEXT_PUBLIC_OLLAMA_MODEL_LABEL ?? "Ollama";
+
 export default function ChatInput({ input, onInputChange, onSend, loading, placeholder }: ChatInputProps) {
   const [focused, setFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -55,7 +57,7 @@ export default function ChatInput({ input, onInputChange, onSend, loading, place
           </button>
         </div>
         <div style={{ textAlign: "center", fontSize: 10.5, color: "var(--text-faint)", marginTop: 8 }}>
-          ⏎ Send &nbsp;·&nbsp; ⇧⏎ New line &nbsp;·&nbsp; Powered by Ollama + RAG
+          ⏎ Send &nbsp;·&nbsp; ⇧⏎ New line &nbsp;·&nbsp; {MODEL_FOOTER} + RAG
         </div>
       </div>
     </div>

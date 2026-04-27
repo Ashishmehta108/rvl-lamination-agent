@@ -140,7 +140,7 @@ export default function SensorList({ items }: SensorListProps) {
   const toggle = useCallback((cat: string) => setExpanded(p => ({ ...p, [cat]: !p[cat] })), []);
 
   const activeCats = [...CATEGORY_ORDER, ...Object.keys(grouped).filter(c => !CATEGORY_ORDER.includes(c))]
-    .filter(c => grouped[c]?.length > 0);
+    .filter(c => (grouped[c]?.length ?? 0) > 0);
 
   return (
     <section>
@@ -184,7 +184,7 @@ export default function SensorList({ items }: SensorListProps) {
             {/* Tag rows — on desktop: stacked; on mobile: 2-col grid */}
             {(expanded[cat] ?? true) && (
               <div className="rvl-sensor-grid">
-                {grouped[cat].map(item => (
+                {(grouped[cat] ?? []).map(item => (
                   <SensorRow key={item.slug || item.tagId} item={item} />
                 ))}
               </div>

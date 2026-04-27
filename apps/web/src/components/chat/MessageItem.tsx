@@ -1,7 +1,9 @@
 import React, { useState } from "react";
-import { Cpu, DocumentText, SearchNormal1, TickCircle } from "iconsax-reactjs";
-import { Message, ToolStep } from "../../hooks/useChat";
-import { useTypewriter } from "../../hooks/useTypewriter";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeSanitize from "rehype-sanitize";
+import { Cpu, DocumentText, Flash, SearchNormal1, TickCircle } from "iconsax-reactjs";
+import { Message, ToolStep, type ContextBlock } from "../../hooks/useChat";
 import CopyBtn from "./CopyBtn";
 
 interface MessageItemProps {
@@ -9,7 +11,7 @@ interface MessageItemProps {
   isLast: boolean;
 }
 
-/* ── Inline SVG icons for tools (avoids iconsax missing exports) ── */
+/* ── Inline SVG icons ── */
 const DbIcon = () => (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <ellipse cx="12" cy="5" rx="9" ry="3" />
@@ -35,16 +37,107 @@ const ClockIcon = () => (
 /* ── Tool icon mapping ── */
 function ToolIcon({ tool }: { tool: string }) {
   if (tool === "rag_search") return <SearchNormal1 size={11} color="currentColor" variant="Bold" />;
-  if (tool === "alerts_db" || tool === "tags_db") return <DbIcon />;
-  if (tool === "reports_db") return <DocumentText size={11} color="currentColor" variant="Bold" />;
+  if (tool === "planner") return <DocumentText size={11} color="currentColor" variant="Bold" />;
+  if (tool === "find_tags") return <SearchNormal1 size={11} color="currentColor" variant="Bold" />;
+  if (tool === "get_tags" || tool === "tags_db" || tool === "tags_selected") return <DbIcon />;
+  if (tool === "get_alerts" || tool === "alerts_db") return <Flash size={11} color="currentColor" variant="Bold" />;
+  if (tool === "get_reports" || tool === "reports_db") return <DocumentText size={11} color="currentColor" variant="Bold" />;
+  if (tool === "get_production_metrics") return <Cpu size={11} color="currentColor" variant="Bold" />;
   if (tool === "llm") return <Cpu size={11} color="currentColor" variant="Bold" />;
   return <DbIcon />;
+}
+
+/**
+ * Strip raw machine-readable tag dump lines that can leak through from the LLM.
+ * These look like:  "- **SLUG** — value **UNIT** — tagId `xxx` — **timestamp**"
+ * or numbered:      "1) **SLUG** — value **UNIT** — tagId `xxx` — **timestamp**"
+ * We replace them with a clean inline sentence instead of showing internal IDs.
+ */
+function cleanResponseText(text: string): string {
+  // 1. Remove lines that contain raw tagId backtick patterns
+  const tagIdLineRe = /^.*tagId\s*`[^`]+`.*$/gm;
+  let cleaned = text.replace(tagIdLineRe, "");
+
+  // 2. Remove "tagId `...`" or "(Live Tag ID ...)" fragments inline
+  const tagIdInlineRe = /(?:\(Live\s+)?Tag\s+ID\s+[`(]?[\w-]+[`)h]?/gi;
+  cleaned = cleaned.replace(tagIdInlineRe, "");
+
+  // 3. Remove leftover "—" chains or double separators
+  cleaned = cleaned.replace(/\s—\s+tag_[\w-]+/g, "");
+  cleaned = cleaned.replace(/—\s*—+/g, "—");
+
+  // 4. Collapse multiple blank lines left behind
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+
+  return cleaned;
+}
+
+function ContextBlocksPanel({ blocks, liveTagCount }: { blocks: ContextBlock[]; liveTagCount?: number }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5,
+          fontSize: 11,
+          color: "var(--text-muted)",
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: 6,
+          padding: "3px 10px 3px 8px",
+          cursor: "pointer",
+          fontFamily: "inherit",
+        }}
+      >
+        Injected context ({blocks.length}
+        {liveTagCount != null ? ` · ~${liveTagCount} tag lines` : ""})
+        <ChevronIcon up={open} />
+      </button>
+      {open && (
+        <div
+          style={{
+            marginTop: 6,
+            borderLeft: "2px solid var(--accent)",
+            marginLeft: 8,
+            paddingLeft: 10,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          {blocks.map((b, i) => (
+            <div key={i}>
+              <div style={{ fontSize: 10, fontWeight: 600, color: "var(--accent)", marginBottom: 4 }}>{b.source}</div>
+              <pre
+                style={{
+                  margin: 0,
+                  fontSize: 10,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  color: "var(--text-muted)",
+                  maxHeight: 160,
+                  overflow: "auto",
+                }}
+              >
+                {b.preview}
+              </pre>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ── Steps accordion ── */
 function StepsPanel({ steps }: { steps: ToolStep[] }) {
   const [open, setOpen] = useState(false);
   const totalMs = steps.reduce((s, t) => s + t.durationMs, 0);
+  const totalLabel = totalMs < 1000 ? `${totalMs}ms` : `${(totalMs / 1000).toFixed(1)}s`;
 
   return (
     <div style={{ marginBottom: 6 }}>
@@ -59,7 +152,7 @@ function StepsPanel({ steps }: { steps: ToolStep[] }) {
         }}
       >
         <ClockIcon />
-        <span>{steps.length} steps · {(totalMs / 1000).toFixed(1)}s</span>
+        <span>Built in {totalLabel} · {steps.length} steps</span>
         <ChevronIcon up={open} />
       </button>
 
@@ -95,15 +188,113 @@ function StepsPanel({ steps }: { steps: ToolStep[] }) {
   );
 }
 
-export default function MessageItem({ msg, isLast }: MessageItemProps) {
+const mdComponents = {
+  code(props: React.ComponentPropsWithoutRef<"code">) {
+    const { children, className, ...rest } = props as any;
+    const isFenced = typeof className === "string" && className.includes("language-");
+    if (!isFenced) {
+      return (
+        <code
+          style={{
+            background: "var(--surface-2)",
+            padding: "2px 6px",
+            borderRadius: 4,
+            fontSize: "0.9em",
+            border: "1px solid var(--border)",
+          }}
+          {...rest}
+        >
+          {children}
+        </code>
+      );
+    }
+    return (
+      <pre
+        style={{
+          margin: "10px 0",
+          padding: 12,
+          overflow: "auto",
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          fontSize: 12,
+          lineHeight: 1.5,
+        }}
+      >
+        <code className={className} {...rest}>
+          {children}
+        </code>
+      </pre>
+    );
+  },
+  a: (props: React.ComponentPropsWithoutRef<"a">) => (
+    <a {...props} style={{ color: "var(--accent)", textDecoration: "underline" }} rel="noopener noreferrer" target="_blank" />
+  ),
+  ul: (props: React.ComponentPropsWithoutRef<"ul">) => <ul {...props} style={{ margin: "6px 0", paddingLeft: 20 }} />,
+  ol: (props: React.ComponentPropsWithoutRef<"ol">) => <ol {...props} style={{ margin: "6px 0", paddingLeft: 20 }} />,
+  li: (props: React.ComponentPropsWithoutRef<"li">) => <li {...props} style={{ margin: "3px 0", lineHeight: 1.7 }} />,
+  h2: (props: React.ComponentPropsWithoutRef<"h2">) => (
+    <h2 {...props} style={{ fontSize: 15, margin: "14px 0 6px", fontWeight: 600, color: "var(--text)" }} />
+  ),
+  h3: (props: React.ComponentPropsWithoutRef<"h3">) => (
+    <h3 {...props} style={{ fontSize: 14, margin: "10px 0 5px", fontWeight: 600, color: "var(--text)" }} />
+  ),
+  p: (props: React.ComponentPropsWithoutRef<"p">) => <p {...props} style={{ margin: "6px 0", lineHeight: 1.75 }} />,
+  table: (props: React.ComponentPropsWithoutRef<"table">) => (
+    <div style={{ overflow: "auto", margin: "10px 0" }}>
+      <table {...props} style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }} />
+    </div>
+  ),
+  th: (props: React.ComponentPropsWithoutRef<"th">) => (
+    <th {...props} style={{ border: "1px solid var(--border)", padding: "6px 8px", textAlign: "left", background: "var(--surface-2)" }} />
+  ),
+  td: (props: React.ComponentPropsWithoutRef<"td">) => (
+    <td {...props} style={{ border: "1px solid var(--border)", padding: "6px 8px" }} />
+  ),
+  // Suppress raw hr separators that models sometimes emit between tag lines
+  hr: () => null,
+};
+
+function AssistantMarkdown({ content }: { content: string }) {
+  const cleaned = cleanResponseText(content);
+  return (
+    <div
+      className="rvl-chat-md"
+      style={{
+        fontSize: 14,
+        lineHeight: 1.75,
+        color: "var(--text)",
+        wordBreak: "break-word",
+        animation: "rvl-fadein .3s ease both",
+      }}
+    >
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]} skipHtml components={mdComponents as any}>
+        {cleaned}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+export default function MessageItem({ msg }: MessageItemProps) {
   const isAssistant = msg.role === "assistant";
-  const text = useTypewriter(msg.content, isAssistant && isLast && !msg.error, 12);
 
   if (!isAssistant) {
     return (
       <div className="rvl-msg" style={{ display: "flex", justifyContent: "flex-end", gap: 6, padding: "4px 0", alignItems: "flex-end" }}>
         <CopyBtn text={msg.content} />
-        <div style={{ maxWidth: "78%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "18px 18px 4px 18px", padding: "10px 16px", fontSize: 14, lineHeight: 1.7, color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+        <div style={{
+          maxWidth: "78%",
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: "18px 18px 4px 18px",
+          padding: "10px 16px",
+          fontSize: 14,
+          lineHeight: 1.7,
+          color: "var(--text)",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          animation: "rvl-fadein .2s ease both",
+        }}>
           {msg.content}
         </div>
       </div>
@@ -112,22 +303,57 @@ export default function MessageItem({ msg, isLast }: MessageItemProps) {
 
   return (
     <div className="rvl-msg" style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "4px 0" }}>
-      <div style={{ flexShrink: 0, marginTop: 3, width: 26, height: 26, borderRadius: 7, background: "var(--accent-faint)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{
+        flexShrink: 0,
+        marginTop: 3,
+        width: 26,
+        height: 26,
+        borderRadius: 7,
+        background: "var(--accent-faint)",
+        border: "1px solid var(--border)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}>
         <Cpu size={13} color="var(--accent)" variant="Bulk" />
       </div>
       <div style={{ flex: 1, minWidth: 0, paddingTop: 3 }}>
-        {/* Tool steps accordion */}
         {msg.steps && msg.steps.length > 0 && <StepsPanel steps={msg.steps} />}
+        {msg.contextBlocks && msg.contextBlocks.length > 0 && (
+          <ContextBlocksPanel blocks={msg.contextBlocks} liveTagCount={msg.liveTagCount} />
+        )}
 
-        {/* Answer text */}
-        <div style={{ fontSize: 14, lineHeight: 1.75, color: msg.error ? "#c45" : "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-          {text}
-          {isLast && text.length < msg.content.length && (
-            <span style={{ display: "inline-block", width: 2, height: 14, background: "var(--accent)", marginLeft: 2, verticalAlign: "middle", animation: "rvl-blink 1s step-end infinite" }} />
-          )}
-        </div>
+        {msg.findCandidates && msg.findCandidates.length > 0 && (
+          <div style={{ marginBottom: 10, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+            <span style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 600 }}>Tag matches</span>
+            {msg.findCandidates.map((c) => (
+              <span
+                key={c.tagId}
+                title={`${c.name} · score ${c.score.toFixed(1)}${c.unit ? ` · ${c.unit}` : ""}`}
+                style={{
+                  fontSize: 11,
+                  background: "var(--surface-2)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 16,
+                  padding: "3px 10px",
+                  color: "var(--text-muted)",
+                  fontFamily: "ui-monospace, monospace",
+                }}
+              >
+                {c.slug}
+              </span>
+            ))}
+          </div>
+        )}
 
-        {/* Grounding + Citations footer */}
+        {msg.error ? (
+          <div style={{ fontSize: 14, lineHeight: 1.75, color: "#c45", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {msg.content}
+          </div>
+        ) : (
+          <AssistantMarkdown content={msg.content} />
+        )}
+
         {!msg.error && (msg.grounded !== undefined || (msg.citations && msg.citations.length > 0)) && (
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 8 }}>
             {msg.grounded !== undefined && (

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
@@ -15,7 +16,10 @@ import { getNativeDb } from "@rvl/db-mongo";
 import { tryGetBoss } from "./queue/boss.js";
 
 async function main() {
-  const app = Fastify({ loggerInstance: log });
+  const app = Fastify({
+    loggerInstance: log,
+    genReqId: () => randomUUID()
+  });
 
   await app.register(helmet);
   if (config.enableCors) {
@@ -30,7 +34,7 @@ async function main() {
   app.get("/health", async () => ({ ok: true, service: "backend", time: new Date().toISOString() }));
   app.get("/ready", async (_req, reply) => {
     const startedAt = Date.now();
-    const checks: Record<string, { ok: boolean; error?: string }> = {};
+    const checks: Record<string, { ok: boolean; error?: string; models?: unknown; warning?: string }> = {};
 
     // Postgres
     try {
@@ -58,7 +62,7 @@ async function main() {
       checks.queue = { ok: false, error: String(err?.message ?? err) };
     }
 
-    // Ollama (optional dependency for chat)
+    // Ollama (optional dependency for chat + reports)
     try {
       const controller = new AbortController();
       const t = setTimeout(() => controller.abort(), 1500);
@@ -66,6 +70,23 @@ async function main() {
       clearTimeout(t);
       checks.ollama = { ok: res.ok };
       if (!res.ok) checks.ollama.error = `status_${res.status}`;
+      else {
+        const body = (await res.json()) as { models?: { name?: string }[] };
+        const names = new Set(
+          (body.models ?? []).map((m) => m.name).filter((n): n is string => typeof n === "string" && n.length > 0)
+        );
+        const needChat = config.ollamaModel.split(":")[0];
+        const needReport = config.ollamaReportModel.split(":")[0];
+        const hasChat = [...names].some((n) => n === config.ollamaModel || n.startsWith(needChat + ":"));
+        const hasReport = [...names].some((n) => n === config.ollamaReportModel || n.startsWith(needReport + ":"));
+        checks.ollama.models = { chatModelPresent: hasChat, reportModelPresent: hasReport };
+        const warns: string[] = [];
+        if (!hasChat) warns.push(`chat_model_missing:${config.ollamaModel}`);
+        if (!hasReport && config.ollamaReportModel !== config.ollamaModel) {
+          warns.push(`report_model_missing:${config.ollamaReportModel}`);
+        }
+        if (warns.length) checks.ollama.warning = warns.join(";");
+      }
     } catch (err: any) {
       checks.ollama = { ok: false, error: String(err?.name ?? err?.message ?? err) };
     }
