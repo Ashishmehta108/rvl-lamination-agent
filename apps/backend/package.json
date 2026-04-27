@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "seed": "tsx src/mcp/seed.ts",
-    "simulate": "tsx src/scripts/simulate.ts"
+    "simulate": "tsx src/scripts/simulate.ts",
+    "verify:chat": "tsx src/scripts/verifyChatPlan.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.1.0",

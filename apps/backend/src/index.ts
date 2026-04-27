@@ -10,6 +10,7 @@ import { registerIngestRoutes } from "./routes/ingest.js";
 import { registerQueryRoutes } from "./routes/query.js";
 import { registerChatRoutes } from "./routes/chat.js";
 import { registerMlRoutes } from "./routes/ml.js";
+import { registerEmailRoutes } from "./routes/email.js";
 import { startWorkers } from "./workers/index.js";
 import { getPgPool } from "@rvl/db-postgres";
 import { getNativeDb } from "@rvl/db-mongo";
@@ -100,6 +101,7 @@ async function main() {
   await registerQueryRoutes(app as any);
   await registerChatRoutes(app as any);
   await registerMlRoutes(app as any);
+  await registerEmailRoutes(app as any);
 
   await startWorkers({ logger: app.log });
 
