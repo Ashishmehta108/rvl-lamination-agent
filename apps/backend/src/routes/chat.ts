@@ -1069,6 +1069,8 @@
 //     }
 //   );
 // }
+
+
 import type { FastifyInstance } from "fastify";
 import { ChatRequestSchema } from "@rvl/shared";
 import { requireApiAuth, validateMachineAccess } from "../auth.js";
@@ -1086,7 +1088,6 @@ import { runToolPlan, type ChatToolCall, type FindTagCandidate } from "../servic
 import {
   buildChatSessionKey,
   getChatHistoryCached,
-  mergeHistoryWithRequest,
   putChatHistoryCached,
   type ChatHistoryMessage,
 } from "../services/chatHistoryCache.js";
@@ -1097,7 +1098,6 @@ import {
   detectMissingContext,
   selectHandler,
   buildContextPacket,
-  buildLlmSystemPrompt,
   assembleFinalResponse,
   validateOutput,
   // Fully deterministic handlers (no LLM)
@@ -1110,6 +1110,11 @@ import {
   handleToolFailure,
   type HandlerType,
 } from "../handlers/chatHandler.js";
+import { enforceGroundingGuard } from "../services/groundingGuard.js";
+import {
+  deriveHealthFromLiveContexts,
+  prepareTurn,
+} from "../services/llmOrchestrator.js";
 
 /* ─────────────────────────────────────────────────────────────────
    UTILITY
@@ -1442,7 +1447,7 @@ export async function registerChatRoutes(app: FastifyInstance) {
         return reply.send({
           answer: handlerDecision.fallbackAnswer,
           grounded: false,
-          health: deriveHealth(liveContexts),
+          health: deriveHealthFromLiveContexts(liveContexts),
           steps: [{ tool: "handler", label: handlerDecision.handler, durationMs: Date.now() - t0 }],
           citations: [],
           contextBlocks: [],
@@ -1469,7 +1474,7 @@ export async function registerChatRoutes(app: FastifyInstance) {
         minute: "2-digit",
       });
 
-      const health = deriveHealth(liveContexts);
+      const health = deriveHealthFromLiveContexts(liveContexts);
 
       const contextPacket = buildContextPacket(
         handlerDecision,
@@ -1487,27 +1492,25 @@ export async function registerChatRoutes(app: FastifyInstance) {
       // RAG-only or no tags → legacy document-grounded prompt
       const useTwoPhase = useToolPipeline && hasLiveData;
 
-      let system: string;
-      if (useTwoPhase) {
-        system = buildLlmSystemPrompt(contextPacket);
-      } else {
-        // Legacy RAG-only system prompt
-        system = buildRagSystemPrompt(ragContexts, liveContexts, handlerDecision.handler);
-      }
-
-      const mergedHistory = mergeHistoryWithRequest(
-        reqBody.messages,
-        cachedHistory?.machineId === machineId ? cachedHistory.messages : [],
-        12
-      );
-      const messages = mergedHistory.slice(-8);
+      const preparedTurn = prepareTurn({
+        useTwoPhase,
+        contextPacket,
+        handler: handlerDecision.handler,
+        reqMessages: reqBody.messages,
+        cachedMessages: cachedHistory?.machineId === machineId ? cachedHistory.messages : [],
+        liveContexts,
+        ragContexts,
+      });
+      const messages = preparedTurn.messages;
 
       reqLog.info(
         {
           model: config.ollamaModel,
           historyMsgs: messages.length,
           cachedHistoryMsgs: cachedHistory?.messages.length ?? 0,
-          systemPromptLen: system.length,
+          systemPromptLen: preparedTurn.systemPrompt.length,
+          estimatedTokens: preparedTurn.estimatedTokens,
+          promptId: preparedTurn.promptId,
           useTwoPhase,
           handler: handlerDecision.handler,
         },
@@ -1518,7 +1521,7 @@ export async function registerChatRoutes(app: FastifyInstance) {
       let rawAnswer: string;
       const tLlm = Date.now();
       try {
-        rawAnswer = await chatOnce([{ role: "system", content: system }, ...messages]);
+        rawAnswer = await chatOnce(messages);
       } catch (err) {
         reqLog.error({ err: String(err), llmMs: Date.now() - tLlm }, "llm_chat_failed");
         // Use deterministic fallback — do NOT fail the request
@@ -1528,15 +1531,24 @@ export async function registerChatRoutes(app: FastifyInstance) {
 
       // ── PIPELINE STEP 8: Validate LLM output ─────────────────────
       const validation = validateOutput(rawAnswer, contextPacket, liveContexts);
+      const grounded =
+        validation.valid
+          ? enforceGroundingGuard(validation.cleaned, contextPacket, liveContexts)
+          : { valid: false, reason: `validation_failed:${validation.reason}`, cleaned: validation.cleaned };
 
-      if (!validation.valid) {
+      if (!validation.valid || !grounded.valid) {
         reqLog.warn(
-          { reason: validation.reason, handler: handlerDecision.handler },
+          {
+            reason: !validation.valid ? validation.reason : grounded.reason,
+            validationReason: validation.reason,
+            groundingReason: grounded.reason,
+            handler: handlerDecision.handler,
+          },
           "llm_output_failed_validation"
         );
       }
 
-      const narrative = validation.valid ? validation.cleaned : contextPacket.fallback;
+      const narrative = validation.valid && grounded.valid ? grounded.cleaned : contextPacket.fallback;
 
       // ── PIPELINE STEP 9: Assemble final answer ────────────────────
       let answer: string;
@@ -1572,7 +1584,7 @@ export async function registerChatRoutes(app: FastifyInstance) {
           grounded: ragContexts.length > 0 || hasLiveData,
           useTwoPhase,
           handler: handlerDecision.handler,
-          validationOk: validation.valid,
+          validationOk: validation.valid && grounded.valid,
         },
         "chat_response_ready"
       );

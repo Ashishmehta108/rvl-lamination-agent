@@ -216,7 +216,7 @@ export async function registerReportRunner(boss: PgBoss, logger: Logger) {
         const stepTimings: Record<string, number> = {};
 
         runLog.info("starting agentic step: overview");
-        const step1 = await runReportStep("overview", SECTION_OVERVIEW_PROMPT, {
+        const step1 = await runReportStep("overview", getReportPrompt(REPORT_OVERVIEW_PROMPT_ID), {
           machineId: payload.machineId,
           window: `${payload.windowStart} to ${payload.windowEnd}`,
           totalAlerts: alerts.length
@@ -224,13 +224,13 @@ export async function registerReportRunner(boss: PgBoss, logger: Logger) {
         stepTimings.overview = step1.ms;
 
         runLog.info("starting agentic step: alerts");
-        const step2 = await runReportStep("alerts", SECTION_ALERTS_PROMPT, {
+        const step2 = await runReportStep("alerts", getReportPrompt(REPORT_ALERTS_PROMPT_ID), {
           alerts: alerts.slice(0, 50).map(a => ({ severity: a.severity, title: a.title, time: a.startsAt }))
         }, runLog);
         stepTimings.alerts = step2.ms;
 
         runLog.info("starting agentic step: tags");
-        const step3 = await runReportStep("tags", SECTION_TAGS_PROMPT, {
+        const step3 = await runReportStep("tags", getReportPrompt(REPORT_TAGS_PROMPT_ID), {
           tags: tagSnapshot.slice(0, 20).map(t => ({ slug: t.slug, value: t.value, unit: t.unit }))
         }, runLog);
         stepTimings.tags = step3.ms;
@@ -254,14 +254,14 @@ export async function registerReportRunner(boss: PgBoss, logger: Logger) {
         // Build deterministic production tables
         const productionTablesHtml = hasProduction
           ? [
-              buildProductionHtmlTable("Daily (Last 7 Days)", productionData.daily),
-              buildProductionHtmlTable("Weekly (Last 4 Weeks)", productionData.weekly),
-              buildProductionHtmlTable("Monthly (Last 3 Months)", productionData.monthly),
-            ].join("")
+            buildProductionHtmlTable("Daily (Last 7 Days)", productionData.daily),
+            buildProductionHtmlTable("Weekly (Last 4 Weeks)", productionData.weekly),
+            buildProductionHtmlTable("Monthly (Last 3 Months)", productionData.monthly),
+          ].join("")
           : "";
 
         runLog.info("starting agentic step: recommendations");
-        const step4 = await runReportStep("recommendations", SECTION_RECOMMENDATIONS_PROMPT, {
+        const step4 = await runReportStep("recommendations", getReportPrompt(REPORT_RECOMMENDATIONS_PROMPT_ID), {
           alertSummary: `${alerts.length} alerts found`,
           criticalTags: tagSnapshot.slice(0, 5),
           productionSummary: hasProduction

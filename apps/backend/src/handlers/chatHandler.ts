@@ -161,7 +161,16 @@
     handler: HandlerType;
     machineId: string;
     capturedAt: string;
+  promptProfile: "small-model-safe";
     brief: string;               // compact, token-efficient LLM input
+  evidenceSummary: {
+    tagCount: number;
+    alertCount: number;
+    productionBucketCount: number;
+    stale: boolean;
+    partial: boolean;
+    hasConflict: boolean;
+  };
     preRendered: {
       introLine: string;
       alertsBlock: string | null;
@@ -693,7 +702,16 @@ interface ParsedProductionBucket {
       handler: handler.handler,
       machineId,
       capturedAt,
+      promptProfile: "small-model-safe",
       brief,
+      evidenceSummary: {
+        tagCount: tags.length,
+        alertCount: alerts.length,
+        productionBucketCount: production.length,
+        stale: ctx.isStale,
+        partial: ctx.isPartial,
+        hasConflict: ctx.hasConflict,
+      },
       preRendered,
       constraints,
       fallback,

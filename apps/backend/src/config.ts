@@ -52,6 +52,10 @@ export const config = {
   ollamaRepeatPenalty: getEnvNum("OLLAMA_REPEAT_PENALTY", 1.15),
   ollamaKeepAlive: getEnv("OLLAMA_KEEP_ALIVE", "30s"),
   llmTimeoutMs: getEnvNum("LLM_TIMEOUT_MS", 120_000),
+  llmSmallModelMode: getEnvBool("LLM_SMALL_MODEL_MODE", true),
+  llmTargetMaxPromptTokens: getEnvNum("LLM_TARGET_MAX_PROMPT_TOKENS", 1400),
+  llmTargetMaxHistoryMessages: getEnvNum("LLM_TARGET_MAX_HISTORY_MESSAGES", 6),
+  llmStrictGrounding: getEnvBool("LLM_STRICT_GROUNDING", true),
 
   /** Scheduled / narrative reports (defaults to chat model if unset) */
   ollamaReportModel: (() => {

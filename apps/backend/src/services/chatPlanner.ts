@@ -9,7 +9,7 @@ export const ChatPlannerSchema = z.object({
         args: z.record(z.unknown()).optional()
       })
     )
-    .max(8)
+    .max(4)
 });
 
 function todayISO(): string {
@@ -19,8 +19,7 @@ function todayISO(): string {
 export const PLANNER_SYSTEM = `You are a planner for an industrial lamination assistant. Output ONLY valid JSON (no markdown fences, no prose).
 Today's date: ${todayISO()}
 
-Schema:
-{"tools":[{"name":"<tool>","args":{...}}, ...]}
+Schema: {"tools":[{"name":"<tool>","args":{...}},...]}
 
 Allowed tools and args:
 - find_tags: { "query": "<user phrase or tag name fragment>" }
@@ -164,7 +163,11 @@ export function defaultToolPlan(userQuery: string, clientTagIds?: string[]): Cha
     tools.push({ name: "get_tags", args: { tagIds: clientTagIds.slice(0, 24) } });
   }
 
-  if (/\b(find|which|what|show)\b.*\b(tag|sensor)\b|\b(tag|sensor)\b.*\b(winder|extruder|rpm|tension|gsm|meter|speed)\b/i.test(userQuery)) {
+  if (
+    /\b(find|which|what|show)\b.*\b(tag|sensor)\b|\b(tag|sensor)\b.*\b(winder|extruder|rpm|tension|gsm|meter|speed)\b/i.test(
+      userQuery
+    )
+  ) {
     tools.push({ name: "find_tags", args: { query: userQuery.slice(0, 200) } });
   }
 
@@ -199,5 +202,5 @@ export function defaultToolPlan(userQuery: string, clientTagIds?: string[]): Cha
     tools.push({ name: "get_tags", args: { limit: 28 } });
   }
 
-  return tools.slice(0, 8);
+  return tools.slice(0, 4);
 }
