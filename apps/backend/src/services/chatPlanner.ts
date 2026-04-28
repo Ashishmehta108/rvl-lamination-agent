@@ -84,6 +84,7 @@ const MONTH_MAP: Record<string, number> = {
   jul: 6, july: 6, aug: 7, august: 7, sep: 8, september: 8,
   oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
 };
+//
 
 /**
  * Extract a date range from the user query.
