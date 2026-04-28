@@ -10,6 +10,13 @@ import { getMongoClient } from "@rvl/db-mongo";
 import { config } from "../config.js";
 import { Jobs } from "./jobs.js";
 import { chatOnceWithModel } from "../llm/ollama.js";
+import {
+  getPromptDescriptor,
+  REPORT_OVERVIEW_PROMPT_ID,
+  REPORT_ALERTS_PROMPT_ID,
+  REPORT_TAGS_PROMPT_ID,
+  REPORT_RECOMMENDATIONS_PROMPT_ID,
+} from "../services/promptRegistry.js";
 
 type ReportRunPayload = {
   runId?: string;
@@ -20,27 +27,13 @@ type ReportRunPayload = {
   windowEnd: string;
 };
 
-/* ─── Specialized Prompts for Agentic Steps ─── */
+/* ─── Prompt Registry lookup ─── */
 
-const SECTION_OVERVIEW_PROMPT = `You are an industrial reporting agent. 
-Task: Write a 1-2 paragraph Executive Overview for the machine's performance in this period.
-Style: Professional, concise, no fluff. Use <h3>Executive Overview</h3> as heading.
-Facts provided: Machine ID, window dates, total alert counts.`;
-
-const SECTION_ALERTS_PROMPT = `You are an industrial reporting agent.
-Task: Analyze the ALERTS log provided. Group by severity and summarize any recurring issues.
-Style: Use <h3>Alert Analysis</h3> as heading. Use <ul> and <li>. Mention specific alert titles.
-Facts provided: List of alerts (severity, title, timestamp).`;
-
-const SECTION_TAGS_PROMPT = `You are an industrial reporting agent.
-Task: Analyze the LIVE TAG SNAPSHOT. Highlight 2-3 most critical sensors and their current values.
-Style: Use <h3>Sensor Snapshot Analysis</h3> as heading. Natural prose, no raw lists. 
-Facts provided: Tag slugs, values, and units.`;
-
-const SECTION_RECOMMENDATIONS_PROMPT = `You are an industrial reporting agent.
-Task: Based on the alerts and tag values, provide 3-4 specific maintenance or operational recommendations.
-Style: Use <h3>Operational Recommendations</h3> as heading. Use a numbered list.
-Facts provided: Summary of alerts and latest tags.`;
+function getReportPrompt(id: string): string {
+  const desc = getPromptDescriptor(id);
+  if (!desc) throw new Error(`Report prompt not found in registry: ${id}`);
+  return desc.systemPrompt;
+}
 
 async function buildTagSnapshot(machineId: string) {
   try {
@@ -150,7 +143,7 @@ export async function registerReportRunner(boss: PgBoss, logger: Logger) {
         const stepTimings: Record<string, number> = {};
         
         runLog.info("starting agentic step: overview");
-        const step1 = await runReportStep("overview", SECTION_OVERVIEW_PROMPT, {
+        const step1 = await runReportStep("overview", getReportPrompt(REPORT_OVERVIEW_PROMPT_ID), {
           machineId: payload.machineId,
           window: `${payload.windowStart} to ${payload.windowEnd}`,
           totalAlerts: alerts.length
@@ -158,19 +151,19 @@ export async function registerReportRunner(boss: PgBoss, logger: Logger) {
         stepTimings.overview = step1.ms;
 
         runLog.info("starting agentic step: alerts");
-        const step2 = await runReportStep("alerts", SECTION_ALERTS_PROMPT, {
+        const step2 = await runReportStep("alerts", getReportPrompt(REPORT_ALERTS_PROMPT_ID), {
           alerts: alerts.slice(0, 50).map(a => ({ severity: a.severity, title: a.title, time: a.startsAt }))
         }, runLog);
         stepTimings.alerts = step2.ms;
 
         runLog.info("starting agentic step: tags");
-        const step3 = await runReportStep("tags", SECTION_TAGS_PROMPT, {
+        const step3 = await runReportStep("tags", getReportPrompt(REPORT_TAGS_PROMPT_ID), {
           tags: tagSnapshot.slice(0, 20).map(t => ({ slug: t.slug, value: t.value, unit: t.unit }))
         }, runLog);
         stepTimings.tags = step3.ms;
 
         runLog.info("starting agentic step: recommendations");
-        const step4 = await runReportStep("recommendations", SECTION_RECOMMENDATIONS_PROMPT, {
+        const step4 = await runReportStep("recommendations", getReportPrompt(REPORT_RECOMMENDATIONS_PROMPT_ID), {
           alertSummary: `${alerts.length} alerts found`,
           criticalTags: tagSnapshot.slice(0, 5)
         }, runLog);
