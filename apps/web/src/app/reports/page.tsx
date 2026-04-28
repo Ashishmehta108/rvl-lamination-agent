@@ -8,9 +8,10 @@ import { DocumentText } from "iconsax-reactjs";
 import AppHeader from "../../components/AppHeader";
 import { api } from "../../lib/api";
 import type { ReportRun } from "../../hooks/useDashboard";
+import { useAppContext } from "../../context/AppContext";
 
 export default function ReportsListPage() {
-  const [machineId, setMachineId] = useState("lamination-01");
+  const { machineId, setMachineId } = useAppContext();
 
   useEffect(() => {
     const m = new URLSearchParams(window.location.search).get("machineId");
@@ -45,58 +46,60 @@ export default function ReportsListPage() {
         }
       />
 
-      <main style={{ maxWidth: 960, margin: "0 auto", padding: "20px 20px 48px" }}>
+      <main style={{ maxWidth: 960, margin: "0 auto", padding: "clamp(16px, 4vw, 20px) clamp(12px, 3vw, 20px) 48px" }}>
         {isLoading && !data && <p style={{ color: "var(--text-faint)", fontSize: 13 }}>Loading…</p>}
         {error && <p style={{ color: "#c45" }}>Could not load reports.</p>}
 
         <div className="rvl-card" style={{ padding: 0, overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead>
-              <tr style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border-subtle)" }}>
-                <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 600, color: "var(--text-muted)" }}>Created</th>
-                <th style={{ textAlign: "left", padding: "10px 8px", fontWeight: 600, color: "var(--text-muted)" }}>Window</th>
-                <th style={{ textAlign: "left", padding: "10px 8px", fontWeight: 600, color: "var(--text-muted)" }}>Status</th>
-                <th style={{ textAlign: "right", padding: "10px 8px", fontWeight: 600, color: "var(--text-muted)" }}>Alerts</th>
-                <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 600, color: "var(--text-muted)" }}>Email</th>
-                <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 600, color: "var(--text-muted)" }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {(data?.items ?? []).map((r) => (
-                <tr key={r.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{new Date(r.createdAt).toLocaleString()}</td>
-                  <td style={{ padding: "10px 8px", color: "var(--text-muted)", fontSize: 11 }}>
-                    {r.windowStart && r.windowEnd
-                      ? `${new Date(r.windowStart).toISOString().slice(0, 10)} → ${new Date(r.windowEnd).toISOString().slice(0, 10)}`
-                      : "—"}
-                  </td>
-                  <td style={{ padding: "10px 8px" }}>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        padding: "2px 8px",
-                        borderRadius: 4,
-                        background: "var(--surface-2)",
-                        border: "1px solid var(--border)",
-                      }}
-                    >
-                      {r.status}
-                    </span>
-                  </td>
-                  <td style={{ padding: "10px 8px", textAlign: "right" }}>{r.metrics?.alerts ?? "—"}</td>
-                  <td style={{ padding: "10px 14px", fontSize: 11 }}>{emailCell(r.metrics)}</td>
-                  <td style={{ padding: "10px 14px", textAlign: "right" }}>
-                    <Link
-                      href={`/reports/${encodeURIComponent(r.id)}?machineId=${encodeURIComponent(machineId)}`}
-                      style={{ color: "var(--accent)", fontWeight: 500, textDecoration: "none" }}
-                    >
-                      Open
-                    </Link>
-                  </td>
+          <div className="rvl-table-responsive">
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 600 }}>
+              <thead>
+                <tr style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border-subtle)" }}>
+                  <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 600, color: "var(--text-muted)" }}>Created</th>
+                  <th style={{ textAlign: "left", padding: "10px 8px", fontWeight: 600, color: "var(--text-muted)" }}>Window</th>
+                  <th style={{ textAlign: "left", padding: "10px 8px", fontWeight: 600, color: "var(--text-muted)" }}>Status</th>
+                  <th style={{ textAlign: "right", padding: "10px 8px", fontWeight: 600, color: "var(--text-muted)" }}>Alerts</th>
+                  <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 600, color: "var(--text-muted)" }}>Email</th>
+                  <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 600, color: "var(--text-muted)" }}></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {(data?.items ?? []).map((r) => (
+                  <tr key={r.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
+                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{new Date(r.createdAt).toLocaleString()}</td>
+                    <td style={{ padding: "10px 8px", color: "var(--text-muted)", fontSize: 11 }}>
+                      {r.windowStart && r.windowEnd
+                        ? `${new Date(r.windowStart).toISOString().slice(0, 10)} → ${new Date(r.windowEnd).toISOString().slice(0, 10)}`
+                        : "—"}
+                    </td>
+                    <td style={{ padding: "10px 8px" }}>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: "2px 8px",
+                          borderRadius: 4,
+                          background: "var(--surface-2)",
+                          border: "1px solid var(--border)",
+                        }}
+                      >
+                        {r.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: "10px 8px", textAlign: "right" }}>{r.metrics?.alerts ?? "—"}</td>
+                    <td style={{ padding: "10px 14px", fontSize: 11 }}>{emailCell(r.metrics)}</td>
+                    <td style={{ padding: "10px 14px", textAlign: "right" }}>
+                      <Link
+                        href={`/reports/${encodeURIComponent(r.id)}?machineId=${encodeURIComponent(machineId)}`}
+                        style={{ color: "var(--accent)", fontWeight: 500, textDecoration: "none" }}
+                      >
+                        Open
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {data?.items?.length === 0 && (
             <div style={{ padding: 28, textAlign: "center", color: "var(--text-faint)" }}>No report runs yet.</div>
           )}

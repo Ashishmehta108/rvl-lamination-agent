@@ -30,12 +30,30 @@ export default function ChatInput({ input, onInputChange, onSend, loading, place
   };
 
   return (
-    <div style={{ borderTop: "1px solid var(--border)", background: "var(--surface)", padding: "12px 20px 16px", flexShrink: 0 }}>
-      <div style={{ maxWidth: 720, margin: "0 auto" }}>
-        <div className={focused ? "rvl-input-focused" : ""} style={{
-          display: "flex", alignItems: "flex-end", gap: 8, background: "var(--surface-2)", border: "1px solid var(--border)", 
-          borderRadius: 12, padding: "8px 8px 8px 14px", boxShadow: "var(--shadow)", transition: "border-color .15s, box-shadow .15s"
-        }}>
+    <div className="rvl-input-area" style={{ 
+      borderTop: "1px solid var(--border)", 
+      background: "var(--bg)", 
+      padding: "16px 20px 24px", 
+      flexShrink: 0,
+      zIndex: 10
+    }}>
+      <div style={{ maxWidth: 740, margin: "0 auto" }}>
+        <div 
+          className={focused ? "rvl-input-focused" : ""} 
+          style={{
+            display: "flex", 
+            alignItems: "flex-end", 
+            gap: 12, 
+            background: "var(--surface-2)", 
+            border: `1px solid ${focused ? "var(--accent)" : "var(--border)"}`, 
+            borderRadius: 16, 
+            padding: "12px 12px 12px 20px", 
+            boxShadow: focused 
+              ? "0 8px 30px -10px rgba(0,0,0,0.1), 0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent)" 
+              : "0 4px 12px -2px rgba(0,0,0,0.05)", 
+            transition: "all .2s cubic-bezier(.4,0,.2,1)"
+          }}
+        >
           <textarea
             ref={textareaRef}
             rows={1}
@@ -46,18 +64,47 @@ export default function ChatInput({ input, onInputChange, onSend, loading, place
             disabled={loading}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
-            style={{ flex: 1, background: "transparent", border: "none", outline: "none", resize: "none", color: "var(--text)", fontSize: 14, lineHeight: 1.55, fontFamily: "inherit", overflowY: "auto", paddingTop: 0 }}
+            style={{ 
+              flex: 1, 
+              background: "transparent", 
+              border: "none", 
+              outline: "none", 
+              resize: "none", 
+              color: "var(--text)", 
+              fontSize: 15, 
+              lineHeight: 1.6, 
+              fontFamily: "inherit", 
+              overflowY: "auto", 
+              paddingTop: 4, 
+              paddingBottom: 4 
+            }}
           />
-          <button onClick={onSend} disabled={loading || !input.trim()} style={{
-            flexShrink: 0, width: 30, height: 30, borderRadius: "50%", border: "none", 
-            background: loading || !input.trim() ? "var(--surface-3)" : "var(--accent)", 
-            display: "flex", alignItems: "center", justifyContent: "center", cursor: loading || !input.trim() ? "not-allowed" : "pointer", transition: "background .15s"
-          }}>
-            <ArrowUp size={14} color="#fff" variant="Bold" />
+          <button 
+            onClick={onSend} 
+            disabled={loading || !input.trim()} 
+            style={{
+              flexShrink: 0, 
+              width: 36, 
+              height: 36, 
+              borderRadius: 11, 
+              border: "none", 
+              background: loading || !input.trim() ? "var(--surface-3)" : "var(--accent)", 
+              display: "flex", 
+              alignItems: "center", 
+              justifyContent: "center", 
+              cursor: loading || !input.trim() ? "not-allowed" : "pointer", 
+              transition: "all .25s cubic-bezier(.4,0,.2,1)",
+              boxShadow: loading || !input.trim() ? "none" : "0 4px 12px -2px color-mix(in srgb, var(--accent) 40%, transparent)",
+              transform: loading ? "scale(0.95)" : "none"
+            }}
+          >
+            <ArrowUp size={20} color="#fff" variant="Bold" />
           </button>
         </div>
-        <div style={{ textAlign: "center", fontSize: 10.5, color: "var(--text-faint)", marginTop: 8 }}>
-          ⏎ Send &nbsp;·&nbsp; ⇧⏎ New line &nbsp;·&nbsp; {MODEL_FOOTER} + RAG
+        <div style={{ display: "flex", justifyContent: "center", gap: 16, fontSize: 10, color: "var(--text-faint)", marginTop: 12, letterSpacing: "0.02em", fontWeight: 500 }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ border: "1px solid var(--border)", borderRadius: 3, padding: "1px 3px" }}>Enter</span> Send</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ border: "1px solid var(--border)", borderRadius: 3, padding: "1px 3px" }}>Shift + Enter</span> New line</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 4 }}>Model: {MODEL_FOOTER}</span>
         </div>
       </div>
     </div>

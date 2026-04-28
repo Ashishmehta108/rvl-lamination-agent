@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "../lib/api";
+import { toast } from "sonner";
 
 const STORE_KEY = "rvl-conversations";
 
@@ -163,6 +164,7 @@ export function useChat() {
         c.id === convId ? { ...c, messages: [...c.messages, assistantMsg], updatedAt: Date.now() } : c
       ));
     } catch (e: any) {
+      toast.error("Assistant failed to respond", { description: e.message || "An unexpected error occurred." });
       const errorMsg: Message = {
         role: "assistant",
         content: `⚠ ${e.message}`,

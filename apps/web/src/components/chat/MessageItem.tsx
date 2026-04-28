@@ -75,24 +75,27 @@ function cleanResponseText(text: string): string {
 function ContextBlocksPanel({ blocks, liveTagCount }: { blocks: ContextBlock[]; liveTagCount?: number }) {
   const [open, setOpen] = useState(false);
   return (
-    <div style={{ marginBottom: 8 }}>
+    <div style={{ marginBottom: 12 }}>
       <button
         type="button"
         onClick={() => setOpen(!open)}
         style={{
           display: "inline-flex",
           alignItems: "center",
-          gap: 5,
+          gap: 6,
           fontSize: 11,
+          fontWeight: 500,
           color: "var(--text-muted)",
           background: "var(--surface-2)",
           border: "1px solid var(--border)",
-          borderRadius: 6,
-          padding: "3px 10px 3px 8px",
+          borderRadius: 8,
+          padding: "5px 12px 5px 10px",
           cursor: "pointer",
           fontFamily: "inherit",
+          transition: "all .2s"
         }}
       >
+        <DocumentText size={12} color="currentColor" variant="Bulk" />
         Injected context ({blocks.length}
         {liveTagCount != null ? ` · ~${liveTagCount} tag lines` : ""})
         <ChevronIcon up={open} />
@@ -100,27 +103,30 @@ function ContextBlocksPanel({ blocks, liveTagCount }: { blocks: ContextBlock[]; 
       {open && (
         <div
           style={{
-            marginTop: 6,
+            marginTop: 8,
             borderLeft: "2px solid var(--accent)",
             marginLeft: 8,
-            paddingLeft: 10,
+            paddingLeft: 12,
             display: "flex",
             flexDirection: "column",
-            gap: 8,
+            gap: 10,
+            animation: "rvl-fadein .3s ease both"
           }}
         >
           {blocks.map((b, i) => (
-            <div key={i}>
-              <div style={{ fontSize: 10, fontWeight: 600, color: "var(--accent)", marginBottom: 4 }}>{b.source}</div>
+            <div key={i} style={{ background: "var(--surface-2)", padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em", color: "var(--accent)", marginBottom: 6 }}>{b.source}</div>
               <pre
                 style={{
                   margin: 0,
-                  fontSize: 10,
+                  fontSize: 10.5,
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-word",
                   color: "var(--text-muted)",
-                  maxHeight: 160,
+                  maxHeight: 180,
                   overflow: "auto",
+                  lineHeight: 1.5,
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
                 }}
               >
                 {b.preview}
@@ -140,14 +146,14 @@ function StepsPanel({ steps }: { steps: ToolStep[] }) {
   const totalLabel = totalMs < 1000 ? `${totalMs}ms` : `${(totalMs / 1000).toFixed(1)}s`;
 
   return (
-    <div style={{ marginBottom: 6 }}>
+    <div style={{ marginBottom: 10 }}>
       <button
         onClick={() => setOpen(!open)}
         style={{
-          display: "inline-flex", alignItems: "center", gap: 5,
-          fontSize: 11, color: "var(--text-muted)", background: "var(--surface-2)",
-          border: "1px solid var(--border)", borderRadius: 6, padding: "3px 10px 3px 8px",
-          cursor: "pointer", fontFamily: "inherit", transition: "all .15s",
+          display: "inline-flex", alignItems: "center", gap: 7,
+          fontSize: 11, fontWeight: 500, color: "var(--text-muted)", background: "var(--surface-2)",
+          border: "1px solid var(--border)", borderRadius: 8, padding: "5px 12px 5px 10px",
+          cursor: "pointer", fontFamily: "inherit", transition: "all .2s",
           lineHeight: 1.5
         }}
       >
@@ -158,26 +164,28 @@ function StepsPanel({ steps }: { steps: ToolStep[] }) {
 
       {open && (
         <div style={{
-          marginTop: 6, borderLeft: "2px solid var(--border)",
-          marginLeft: 8, paddingLeft: 12, display: "flex", flexDirection: "column", gap: 4
+          marginTop: 8, borderLeft: "2px solid var(--border)",
+          marginLeft: 8, paddingLeft: 14, display: "flex", flexDirection: "column", gap: 6,
+          animation: "rvl-fadein .2s ease both"
         }}>
           {steps.map((step, i) => (
             <div key={i} style={{
-              display: "flex", alignItems: "center", gap: 8, fontSize: 11.5,
+              display: "flex", alignItems: "center", gap: 10, fontSize: 12,
               color: "var(--text-muted)", animation: "rvl-fadein .2s ease both",
-              animationDelay: `${i * 0.06}s`
+              animationDelay: `${i * 0.05}s`
             }}>
               <div style={{
-                width: 18, height: 18, borderRadius: 4, flexShrink: 0,
+                width: 20, height: 20, borderRadius: 6, flexShrink: 0,
                 background: step.tool === "llm" ? "var(--accent-faint)" : "var(--surface-2)",
                 border: "1px solid var(--border)",
                 display: "flex", alignItems: "center", justifyContent: "center",
-                color: step.tool === "llm" ? "var(--accent)" : "var(--text-muted)"
+                color: step.tool === "llm" ? "var(--accent)" : "var(--text-muted)",
+                boxShadow: step.tool === "llm" ? "0 2px 4px -1px color-mix(in srgb, var(--accent) 20%, transparent)" : "none"
               }}>
                 <ToolIcon tool={step.tool} />
               </div>
               <span style={{ flex: 1 }}>{step.label}</span>
-              <span style={{ fontSize: 10, color: "var(--text-faint)", fontFamily: "monospace" }}>
+              <span style={{ fontSize: 10.5, color: "var(--text-faint)", fontFamily: "monospace", opacity: 0.8 }}>
                 {step.durationMs < 1000 ? `${step.durationMs}ms` : `${(step.durationMs / 1000).toFixed(1)}s`}
               </span>
             </div>
@@ -196,11 +204,14 @@ const mdComponents = {
       return (
         <code
           style={{
-            background: "var(--surface-2)",
-            padding: "2px 6px",
-            borderRadius: 4,
-            fontSize: "0.9em",
+            background: "var(--surface-3)",
+            padding: "2px 5px",
+            borderRadius: 5,
+            fontSize: "0.92em",
             border: "1px solid var(--border)",
+            color: "var(--accent)",
+            fontWeight: 500,
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
           }}
           {...rest}
         >
@@ -209,49 +220,52 @@ const mdComponents = {
       );
     }
     return (
-      <pre
-        style={{
-          margin: "10px 0",
-          padding: 12,
-          overflow: "auto",
-          background: "var(--surface-2)",
-          border: "1px solid var(--border)",
-          borderRadius: 8,
-          fontSize: 12,
-          lineHeight: 1.5,
-        }}
-      >
-        <code className={className} {...rest}>
-          {children}
-        </code>
-      </pre>
+      <div style={{ position: "relative", margin: "14px 0" }}>
+        <pre
+          style={{
+            margin: 0,
+            padding: "16px 20px",
+            overflow: "auto",
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            borderRadius: 12,
+            fontSize: 13,
+            lineHeight: 1.6,
+            boxShadow: "inset 0 1px 4px rgba(0,0,0,0.02)",
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+          }}
+        >
+          <code className={className} {...rest}>
+            {children}
+          </code>
+        </pre>
+      </div>
     );
   },
   a: (props: React.ComponentPropsWithoutRef<"a">) => (
-    <a {...props} style={{ color: "var(--accent)", textDecoration: "underline" }} rel="noopener noreferrer" target="_blank" />
+    <a {...props} style={{ color: "var(--accent)", textDecoration: "none", borderBottom: "1px solid color-mix(in srgb, var(--accent) 30%, transparent)", fontWeight: 500, transition: "all .2s" }} rel="noopener noreferrer" target="_blank" />
   ),
-  ul: (props: React.ComponentPropsWithoutRef<"ul">) => <ul {...props} style={{ margin: "6px 0", paddingLeft: 20 }} />,
-  ol: (props: React.ComponentPropsWithoutRef<"ol">) => <ol {...props} style={{ margin: "6px 0", paddingLeft: 20 }} />,
-  li: (props: React.ComponentPropsWithoutRef<"li">) => <li {...props} style={{ margin: "3px 0", lineHeight: 1.7 }} />,
+  ul: (props: React.ComponentPropsWithoutRef<"ul">) => <ul {...props} style={{ margin: "10px 0", paddingLeft: 24, listStyleType: "disc" }} />,
+  ol: (props: React.ComponentPropsWithoutRef<"ol">) => <ol {...props} style={{ margin: "10px 0", paddingLeft: 24 }} />,
+  li: (props: React.ComponentPropsWithoutRef<"li">) => <li {...props} style={{ margin: "6px 0", lineHeight: 1.8 }} />,
   h2: (props: React.ComponentPropsWithoutRef<"h2">) => (
-    <h2 {...props} style={{ fontSize: 15, margin: "14px 0 6px", fontWeight: 600, color: "var(--text)" }} />
+    <h2 {...props} style={{ fontSize: 17, margin: "20px 0 10px", fontWeight: 700, color: "var(--text)", letterSpacing: "-0.01em" }} />
   ),
   h3: (props: React.ComponentPropsWithoutRef<"h3">) => (
-    <h3 {...props} style={{ fontSize: 14, margin: "10px 0 5px", fontWeight: 600, color: "var(--text)" }} />
+    <h3 {...props} style={{ fontSize: 15, margin: "16px 0 8px", fontWeight: 600, color: "var(--text)" }} />
   ),
-  p: (props: React.ComponentPropsWithoutRef<"p">) => <p {...props} style={{ margin: "6px 0", lineHeight: 1.75 }} />,
+  p: (props: React.ComponentPropsWithoutRef<"p">) => <p {...props} style={{ margin: "10px 0", lineHeight: 1.8 }} />,
   table: (props: React.ComponentPropsWithoutRef<"table">) => (
-    <div style={{ overflow: "auto", margin: "10px 0" }}>
-      <table {...props} style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }} />
+    <div style={{ overflow: "auto", margin: "16px 0", borderRadius: 10, border: "1px solid var(--border)", boxShadow: "0 2px 10px -4px rgba(0,0,0,0.05)" }}>
+      <table {...props} style={{ borderCollapse: "collapse", width: "100%", fontSize: 13.5 }} />
     </div>
   ),
   th: (props: React.ComponentPropsWithoutRef<"th">) => (
-    <th {...props} style={{ border: "1px solid var(--border)", padding: "6px 8px", textAlign: "left", background: "var(--surface-2)" }} />
+    <th {...props} style={{ borderBottom: "1px solid var(--border)", borderRight: "1px solid var(--border)", padding: "10px 12px", textAlign: "left", background: "var(--surface-3)", fontWeight: 600, color: "var(--text)" }} />
   ),
   td: (props: React.ComponentPropsWithoutRef<"td">) => (
-    <td {...props} style={{ border: "1px solid var(--border)", padding: "6px 8px" }} />
+    <td {...props} style={{ borderBottom: "1px solid var(--border)", borderRight: "1px solid var(--border)", padding: "10px 12px", color: "var(--text-muted)", lineHeight: 1.5 }} />
   ),
-  // Suppress raw hr separators that models sometimes emit between tag lines
   hr: () => null,
 };
 
@@ -275,26 +289,36 @@ function AssistantMarkdown({ content }: { content: string }) {
   );
 }
 
-export default function MessageItem({ msg }: MessageItemProps) {
+export default function MessageItem({ msg, isLast }: MessageItemProps) {
   const isAssistant = msg.role === "assistant";
 
   if (!isAssistant) {
     return (
-      <div className="rvl-msg" style={{ display: "flex", justifyContent: "flex-end", gap: 6, padding: "4px 0", alignItems: "flex-end" }}>
-        <CopyBtn text={msg.content} />
-        <div style={{
-          maxWidth: "78%",
-          background: "var(--surface-2)",
-          border: "1px solid var(--border)",
-          borderRadius: "18px 18px 4px 18px",
-          padding: "10px 16px",
-          fontSize: 14,
-          lineHeight: 1.7,
-          color: "var(--text)",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
-          animation: "rvl-fadein .2s ease both",
-        }}>
+      <div className="rvl-msg" style={{ 
+        display: "flex", 
+        justifyContent: "flex-end", 
+        gap: 12, 
+        padding: "10px 0", 
+        alignItems: "flex-end" 
+      }}>
+        <div style={{ marginBottom: 6, opacity: 0.6 }}><CopyBtn text={msg.content} /></div>
+        <div 
+          className="rvl-msg-bubble" 
+          style={{
+            maxWidth: "75%",
+            background: "var(--surface-3)",
+            border: "1px solid var(--border)",
+            borderRadius: "20px 20px 4px 20px",
+            padding: "12px 20px",
+            fontSize: 15,
+            lineHeight: 1.6,
+            color: "var(--text)",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            boxShadow: "0 4px 15px -3px rgba(0,0,0,0.04), 0 2px 6px -2px rgba(0,0,0,0.02)",
+            position: "relative"
+          }}
+        >
           {msg.content}
         </div>
       </div>
@@ -302,22 +326,29 @@ export default function MessageItem({ msg }: MessageItemProps) {
   }
 
   return (
-    <div className="rvl-msg" style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "4px 0" }}>
+    <div className="rvl-msg" style={{ 
+      display: "flex", 
+      alignItems: "flex-start", 
+      gap: 16, 
+      padding: "16px 0",
+      borderBottom: isLast ? "none" : "1px solid var(--border-faint)"
+    }}>
       <div style={{
         flexShrink: 0,
-        marginTop: 3,
-        width: 26,
-        height: 26,
-        borderRadius: 7,
+        marginTop: 6,
+        width: 32,
+        height: 32,
+        borderRadius: 10,
         background: "var(--accent-faint)",
-        border: "1px solid var(--border)",
+        border: "1px solid color-mix(in srgb, var(--accent) 20%, transparent)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+        boxShadow: "0 4px 10px -4px color-mix(in srgb, var(--accent) 20%, transparent)"
       }}>
-        <Cpu size={13} color="var(--accent)" variant="Bulk" />
+        <Cpu size={16} color="var(--accent)" variant="Bulk" />
       </div>
-      <div style={{ flex: 1, minWidth: 0, paddingTop: 3 }}>
+      <div style={{ flex: 1, minWidth: 0, paddingTop: 4 }}>
         {msg.steps && msg.steps.length > 0 && <StepsPanel steps={msg.steps} />}
         {msg.contextBlocks && msg.contextBlocks.length > 0 && (
           <ContextBlocksPanel blocks={msg.contextBlocks} liveTagCount={msg.liveTagCount} />
@@ -351,7 +382,9 @@ export default function MessageItem({ msg }: MessageItemProps) {
             {msg.content}
           </div>
         ) : (
-          <AssistantMarkdown content={msg.content} />
+          <div className="rvl-msg-bubble" style={{ maxWidth: "85%" }}>
+            <AssistantMarkdown content={msg.content} />
+          </div>
         )}
 
         {!msg.error && (msg.grounded !== undefined || (msg.citations && msg.citations.length > 0)) && (

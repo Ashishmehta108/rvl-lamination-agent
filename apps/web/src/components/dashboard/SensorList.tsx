@@ -1,5 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from "react";
 import { TagLatest } from "../../hooks/useDashboard";
+import { ExportCurve } from "iconsax-reactjs";
+import { toast } from "sonner";
 
 interface SensorListProps {
   items: TagLatest[];
@@ -86,9 +88,23 @@ function SensorRow({ item }: { item: TagLatest }) {
   const unit = UNITS[slug];
   const name = FRIENDLY[slug] ?? slug;
 
+  const handleExport = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const from = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const to = new Date().toISOString();
+    const url = `/api/proxy/metrics/production/samples?machineId=${item.machineId}&from=${from}&to=${to}&tags=${slug}`;
+    
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `data-${slug}-${new Date().getTime()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast.success(`Exporting ${name} data (last 24h)`);
+  };
+
   return (
-    /* CSS class handles desktop (flex row) vs mobile (card column) */
-    <div className="rvl-sensor-card">
+    <div className="rvl-sensor-card" style={{ position: "relative" }}>
       {/* Label */}
       <span style={{
         fontSize: 10.5, color: "var(--text-faint)", fontWeight: 500,
@@ -97,19 +113,48 @@ function SensorRow({ item }: { item: TagLatest }) {
       }}>
         {name}
       </span>
-      {/* Value + unit */}
-      <div style={{ display: "flex", alignItems: "baseline", gap: 3, flexShrink: 0 }}>
-        <span style={{
-          fontSize: 13, fontFamily: "monospace", fontWeight: 700,
-          color: valueColor,
-          transition: flash ? "none" : "color .4s",
-          fontVariantNumeric: "tabular-nums",
-        }}>
-          {val}
-        </span>
-        {!isBool && unit && (
-          <span style={{ fontSize: 9.5, color: "var(--text-faint)", fontWeight: 400 }}>{unit}</span>
-        )}
+      {/* Value + unit + Export */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
+          <span style={{
+            fontSize: 13, fontFamily: "monospace", fontWeight: 700,
+            color: valueColor,
+            transition: flash ? "none" : "color .4s",
+            fontVariantNumeric: "tabular-nums",
+          }}>
+            {val}
+          </span>
+          {!isBool && unit && (
+            <span style={{ fontSize: 9.5, color: "var(--text-faint)", fontWeight: 400 }}>{unit}</span>
+          )}
+        </div>
+        
+        <button
+          onClick={handleExport}
+          title={`Export ${name} history`}
+          style={{
+            background: "none",
+            border: "none",
+            padding: 4,
+            borderRadius: 4,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--text-faint)",
+            transition: "all .15s ease",
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLElement).style.background = "var(--surface-3)";
+            (e.currentTarget as HTMLElement).style.color = "var(--accent)";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.background = "none";
+            (e.currentTarget as HTMLElement).style.color = "var(--text-faint)";
+          }}
+        >
+          <ExportCurve size={12} variant="Bulk" />
+        </button>
       </div>
     </div>
   );

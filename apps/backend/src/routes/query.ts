@@ -209,8 +209,10 @@ export async function registerQueryRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: "from_and_to_required" });
     }
     try {
-      const { csv, from, to } = await exportProductionSamplesCsv({ machineId, fromISO, toISO });
-      reply.header("Content-Disposition", `attachment; filename="production-${machineId}-${from.slice(0, 10)}_${to.slice(0, 10)}.csv"`);
+      const tagsRaw = (req.query as any)?.tags;
+      const tags = typeof tagsRaw === "string" ? tagsRaw.split(",") : Array.isArray(tagsRaw) ? tagsRaw : undefined;
+      const { csv, from, to } = await exportProductionSamplesCsv({ machineId, fromISO, toISO, tags });
+      reply.header("Content-Disposition", `attachment; filename="data-${machineId}-${from.slice(0, 10)}_${to.slice(0, 10)}.csv"`);
       return reply.type("text/csv; charset=utf-8").send(csv);
     } catch (err: any) {
       if (String(err?.message) === "invalid_date_range") {

@@ -8,6 +8,7 @@
 [data-theme="light"] {
   --bg:           #f9f8f6;
   --surface:      #ffffff;
+  --surface-rgb:  255, 255, 255;
   --surface-2:    #f1efeb;
   --surface-3:    #e8e6e1;
   --border:       #e5e2dd;
@@ -24,6 +25,7 @@
 [data-theme="dark"] {
   --bg:           #131210;
   --surface:      #1c1b18;
+  --surface-rgb:  28, 27, 24;
   --surface-2:    #262421;
   --surface-3:    #2f2d29;
   --border:       #2d2b27;
@@ -44,19 +46,22 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
-  font-size: 13px; /* Slightly smaller for precision look */
+  font-size: 13px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   letter-spacing: -0.01em;
+  overflow-x: hidden;
+  width: 100%;
 }
 
 /* ── Components ─────────────────────────────────────────────────────────── */
 .rvl-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   box-shadow: var(--shadow);
   transition: border-color .15s ease;
+  overflow: hidden;
 }
 
 .rvl-btn-primary {
@@ -92,6 +97,12 @@ body {
 
 .rvl-input:focus {
   border-color: var(--accent);
+}
+
+.rvl-glass {
+  background: rgba(var(--surface-rgb), 0.75) !important;
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
 }
 
 /* ── Transitions ────────────────────────────────────────────────────────── */
@@ -135,14 +146,14 @@ body {
 .rvl-grid-kpi {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
+  gap: 16px;
   margin-bottom: 24px;
 }
 
 .rvl-grid-main {
   display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 20px;
+  grid-template-columns: 1fr 340px;
+  gap: 24px;
 }
 
 .rvl-grid-3col {
@@ -158,33 +169,31 @@ body {
 }
 
 @media (max-width: 1024px) {
-  .rvl-grid-main {
-    grid-template-columns: 1fr;
-  }
-  .rvl-grid-3col {
-    grid-template-columns: 1fr 1fr;
-  }
+  .rvl-grid-main { grid-template-columns: 1fr; }
+  .rvl-grid-3col { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 768px) {
+  .rvl-grid-kpi { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .rvl-grid-3col { grid-template-columns: 1fr; }
+  .rvl-grid-2col { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 640px) {
-  .rvl-grid-kpi   { grid-template-columns: 1fr 1fr; gap: 10px; }
-  .rvl-grid-main  { grid-template-columns: 1fr; gap: 16px; }
-  .rvl-grid-3col  { grid-template-columns: 1fr; }
-  .rvl-grid-2col  { grid-template-columns: 1fr; }
-
   main { padding: 16px 12px 40px !important; }
-
   .rvl-hide-mobile { display: none !important; }
-
-  /* Header */
-  .rvl-header-right .rvl-header-asset { display: none; }
-
-  /* Sensor grid: 2-col card layout on mobile */
-  .rvl-sensor-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
+  .rvl-show-mobile-flex { display: flex !important; }
+  
+  /* Table container utility */
+  .rvl-table-responsive {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
+}
+
+@media (max-width: 480px) {
+  .rvl-grid-kpi { grid-template-columns: 1fr; }
 }
 
 /* ── Sensor card layout ───────────────────────────────────────────────────── */

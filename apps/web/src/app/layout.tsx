@@ -1,6 +1,6 @@
 import "./globals.css";
 import type { ReactNode } from "react";
-import { ThemeProvider } from "../lib/theme";
+import { ClientProviders } from "../components/ClientProviders";
 import AppShell from "../components/AppShell";
 
 export const metadata = {
@@ -12,9 +12,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" data-theme="light" suppressHydrationWarning>
       <body>
-        <ThemeProvider>
+        <ClientProviders>
           <AppShell>{children}</AppShell>
-        </ThemeProvider>
+        </ClientProviders>
       </body>
     </html>
   );

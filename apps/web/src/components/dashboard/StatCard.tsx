@@ -31,7 +31,7 @@ export default function StatCard({ title, value, unit, status }: StatCardProps) 
   const valueColor = status ? STATUS_COLOR[status] ?? "var(--text)" : flash ? "var(--accent)" : "var(--text)";
 
   return (
-    <div className="rvl-card" style={{ padding: "14px 18px", position: "relative", overflow: "hidden" }}>
+    <div className="rvl-card" style={{ padding: "clamp(10px, 3.5vw, 16px) clamp(12px, 4vw, 18px)", position: "relative", overflow: "hidden" }}>
       {/* Subtle left accent bar */}
       {status && status !== "inherit" && (
         <div style={{

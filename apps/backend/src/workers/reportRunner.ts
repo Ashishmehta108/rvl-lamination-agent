@@ -145,10 +145,10 @@ export async function registerReportRunner(boss: PgBoss, logger: Logger) {
 
         runLog.info({ alertCount: alerts.length }, "fetching tag snapshot");
         const tagSnapshot = await buildTagSnapshot(payload.machineId);
-        
+
         // Multi-step Agentic Pipeline
         const stepTimings: Record<string, number> = {};
-        
+
         runLog.info("starting agentic step: overview");
         const step1 = await runReportStep("overview", SECTION_OVERVIEW_PROMPT, {
           machineId: payload.machineId,
@@ -250,11 +250,12 @@ function renderHtmlReport(args: {
 }) {
   const alertRows = args.alerts.map(a => {
     const sev = (a.severity || "info").toLowerCase();
-    const color = sev === "critical" ? "#ff4d4f" : sev === "warning" ? "#faad14" : "#1890ff";
+    const color = sev === "critical" ? "#b91c1c" : sev === "warning" ? "#b45309" : "#1d4ed8";
+    const bg = sev === "critical" ? "#fef2f2" : sev === "warning" ? "#fffbeb" : "#eff6ff";
     return `<tr>
-      <td style="color:${color};font-weight:bold">${esc(sev.toUpperCase())}</td>
-      <td>${esc(a.title)}</td>
-      <td class="muted">${esc(a.startsAt.toISOString())}</td>
+      <td style="padding: 10px 14px; border-bottom: 1px solid #f0eee9;"><span style="color:${color};background:${bg};font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700;display:inline-block;">${esc(sev.toUpperCase())}</span></td>
+      <td style="padding: 10px 8px; border-bottom: 1px solid #f0eee9; color: #3a3834; font-size: 12px;">${esc(a.title)}</td>
+      <td style="padding: 10px 14px; border-bottom: 1px solid #f0eee9; color: #a5a29d; font-size: 11px; text-align: right;">${esc(a.startsAt.toISOString().replace('T', ' ').slice(0, 16))}</td>
     </tr>`;
   }).join("");
 
@@ -262,40 +263,61 @@ function renderHtmlReport(args: {
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { background: #0b0f14; color: #d8dee9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 40px; line-height: 1.6; }
-    .report-card { background: #141b24; border: 1px solid #1f2a36; border-radius: 12px; padding: 24px; margin-bottom: 24px; }
-    h2 { color: #88c0d0; margin-top: 0; }
-    h3 { color: #81a1c1; border-bottom: 1px solid #2e3440; padding-bottom: 8px; margin-top: 0; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { text-align: left; padding: 12px; border-bottom: 1px solid #1f2a36; font-size: 13px; }
-    th { background: #0f1720; color: #8aa0b6; }
-    .muted { color: #8aa0b6; font-size: 12px; }
-    .footer { margin-top: 40px; border-top: 1px solid #1f2a36; padding-top: 20px; font-size: 11px; color: #4c566a; display: flex; justify-content: space-between; }
-    ul { padding-left: 20px; }
-    li { margin-bottom: 8px; }
+    body { margin: 0; padding: 0; background-color: #f9f8f6; }
+    .report-card { 
+      background-color: #ffffff; 
+      border: 1px solid #e5e2dd; 
+      border-radius: 10px; 
+      padding: 24px; 
+      margin-bottom: 24px; 
+    }
+    h1 { font-size: 20px; font-weight: 700; margin: 0 0 8px; color: #3a3834; }
+    h2 { font-size: 16px; font-weight: 700; margin: 0 0 16px; color: #3a3834; border-bottom: 1px solid #e5e2dd; padding-bottom: 8px; }
+    h3 { font-size: 14px; font-weight: 700; margin: 24px 0 12px; color: #3a3834; }
+    h4 { font-size: 12px; font-weight: 700; margin: 16px 0 8px; color: #6b6964; text-transform: uppercase; letter-spacing: 0.05em; }
+    p { font-size: 12.5px; margin: 0 0 12px; color: #3a3834; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; padding: 10px 14px; background-color: #f1efeb; color: #6b6964; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .muted { color: #a5a29d; font-size: 11.5px; }
+    ul { padding-left: 18px; margin: 0 0 16px; }
+    li { margin-bottom: 6px; font-size: 12.5px; color: #3a3834; }
+    @media (max-width: 600px) {
+      .report-card { padding: 16px !important; }
+    }
   </style>
 </head>
-<body>
-  <div style="margin-bottom:32px">
-    <h1 style="margin:0;color:#eceff4">Production Report</h1>
-    <p class="muted">Machine: <strong>${esc(args.machineId)}</strong> | Window: ${args.windowStart.toISOString()} to ${args.windowEnd.toISOString()}</p>
-  </div>
+<body style="background-color: #f9f8f6; color: #3a3834; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 40px 20px; line-height: 1.6;">
+  <div style="max-width: 720px; margin: 0 auto;">
+    <div style="margin-bottom: 32px; border-bottom: 1px solid #e5e2dd; padding-bottom: 20px;">
+      <h1 style="font-size: 20px; margin: 0 0 8px;">Production Report</h1>
+      <div style="display: flex; gap: 12px;">
+        <span class="muted">Machine: <strong style="color: #9e5a32;">${esc(args.machineId)}</strong></span>
+        <span class="muted" style="border-left: 1px solid #e5e2dd; padding-left: 12px;">Period: <strong>${args.windowStart.toISOString().slice(0, 10)}</strong> to <strong>${args.windowEnd.toISOString().slice(0, 10)}</strong></span>
+      </div>
+    </div>
 
-  ${args.narrativeHtml}
+    <div class="narrative-sections">
+      ${args.narrativeHtml}
+    </div>
 
-  <div class="report-card">
-    <h3>Recent Alert Log</h3>
-    <table>
-      <thead><tr><th>Severity</th><th>Issue</th><th>Timestamp</th></tr></thead>
-      <tbody>${alertRows || '<tr><td colspan="3" class="muted">No alerts in this window</td></tr>'}</tbody>
-    </table>
-  </div>
+    <div class="report-card" style="margin-top: 32px; background-color: #ffffff; border: 1px solid #e5e2dd; border-radius: 10px; padding: 24px;">
+      <h2 style="font-size: 16px; margin: 0 0 16px; border-bottom: 1px solid #e5e2dd; padding-bottom: 8px;">Recent Alert Log</h2>
+      <div style="overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead><tr><th style="border-radius: 6px 0 0 0; background-color: #f1efeb; padding: 10px 14px;">Severity</th><th style="background-color: #f1efeb; padding: 10px 14px;">Issue</th><th style="border-radius: 0 6px 0 0; text-align: right; padding: 10px 14px; background-color: #f1efeb;">Timestamp</th></tr></thead>
+          <tbody>${alertRows || '<tr><td colspan="3" class="muted" style="padding: 24px; text-align: center;">No alerts recorded in this window</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
 
-  <div class="footer">
-    <span>&copy; RVL Lamination Agent</span>
-    <span>Generated by <strong>${config.ollamaReportModel}</strong> in ${args.buildTimeSeconds}s</span>
+    <div style="margin-top: 48px; border-top: 1px solid #e5e2dd; padding-top: 24px; font-size: 11px; color: #a5a29d; display: flex; justify-content: space-between;">
+      <span>&copy; RVL Lamination Agent &middot; Secure Industrial Intelligence</span>
+      <span>AI Analysis &middot; ${args.buildTimeSeconds}s</span>
+    </div>
   </div>
 </body>
 </html>`;
 }
+

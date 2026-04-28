@@ -46,7 +46,8 @@ function clampBuckets(n: number, granularity: ProductionGranularity): number {
 }
 
 /** Resolve human slug from TagDefinition (handles legacy internal tagIds). */
-function slugStages(): object[] {
+function slugStages(tags?: string[]): object[] {
+  const filter = tags && tags.length > 0 ? tags : [...TRACKED_SLUGS];
   return [
     {
       $lookup: {
@@ -85,7 +86,7 @@ function slugStages(): object[] {
     },
     {
       $match: {
-        metricSlug: { $in: [...TRACKED_SLUGS] },
+        metricSlug: { $in: filter },
         valueNumber: { $exists: true, $ne: null }
       }
     }
@@ -266,6 +267,7 @@ export async function exportProductionSamplesCsv(args: {
   machineId: string;
   fromISO: string;
   toISO: string;
+  tags?: string[];
 }): Promise<{ csv: string; rowCount: number; from: string; to: string }> {
   let from = new Date(args.fromISO);
   let to = new Date(args.toISO);
@@ -287,7 +289,7 @@ export async function exportProductionSamplesCsv(args: {
 
   const pipeline: object[] = [
     { $match: { machineId: args.machineId, ts: { $gte: from, $lte: to } } },
-    ...slugStages(),
+    ...slugStages(args.tags),
     { $sort: { ts: 1 } },
     { $limit: SAMPLE_EXPORT_LIMIT },
     {
