@@ -16,25 +16,27 @@ function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export const PLANNER_SYSTEM = `You are a planner for an industrial lamination assistant. Output ONLY valid JSON (no markdown fences, no prose).
+export const PLANNER_SYSTEM = `You are a planner for an industrial lamination assistant. Output ONLY valid JSON.
 Today's date: ${todayISO()}
 
 Schema: {"tools":[{"name":"<tool>","args":{...}},...]}
 
-Allowed tools and args:
-- find_tags: { "query": "<user phrase or tag name fragment>" }
-- get_tags: { "tagIds"?: ["<mongo tagId>", ...], "limit"?: number }  // omit tagIds for latest snapshot
-- get_alerts: { "includeRecentClosed"?: boolean, "from"?: "<ISO date>", "to"?: "<ISO date>" }  // from/to for historical queries (e.g. "alerts on 23 April" → from="2026-04-23", to="2026-04-24")
-- get_reports: { "limit"?: number }
-- get_production_metrics: { "granularity"?: "daily"|"weekly"|"monthly", "buckets"?: number, "from"?: "<ISO date>", "to"?: "<ISO date>" }
+Allowed tools:
+- find_tags: { "query": "phrase" }
+- get_tags: { "tagIds"?: ["id",...] }
+- get_alerts: { "includeRecentClosed"?: boolean, "from"?: "ISO", "to"?: "ISO" }
+- get_production_metrics: { "granularity": "daily"|"weekly"|"monthly", "buckets": number, "from"?: "ISO", "to"?: "ISO" }
 
-Rules:
-- If the user asks about alerts, include get_alerts. If they mention a specific date, set from/to accordingly.
-- If they ask about a specific sensor/tag by name, include find_tags with their wording then get_tags.
-- If they ask about reports/history, include get_reports.
-- If they ask about production rollups/trends, include get_production_metrics.
-- If they mention a date for production (e.g. "production on 25 April"), set from/to on get_production_metrics.
-- Keep the plan minimal (usually 2–5 tools).`;
+Critical Rules:
+1. If the user mentions a specific date or "yesterday", use historical range (from="YYYY-MM-DD", to="YYYY-MM-DD" + 1 day). Never use same date for both 'from' and 'to'.
+2. If the previous turn was about alerts and the user asks a follow-up date (e.g., "27 April?"), YOU MUST INCLUDE get_alerts for that date.
+3. For current values (speed, tension, amps, RPM, "machine status"), YOU MUST INCLUDE get_tags.
+4. For production queries, include get_production_metrics.
+
+Examples:
+- "alerts on 23 April" -> get_alerts(from="2026-04-23", to="2026-04-24")
+- "24 April?" (after alert query) -> get_alerts(from="2026-04-24", to="2026-04-25")
+- "total production yesterday" -> get_production_metrics(granularity="daily", buckets=1, from="<yesterday>", to="<today>")`;
 
 export function wantsToolPipeline(userText: string, clientTagIds?: string[]): boolean {
   if (clientTagIds && clientTagIds.length > 0) return true;
@@ -67,7 +69,21 @@ export function stripJsonFence(s: string): string {
 export function parsePlannerJson(raw: string): z.infer<typeof ChatPlannerSchema> | null {
   const t = stripJsonFence(raw);
   try {
-    const parsed = JSON.parse(t);
+    let parsed = JSON.parse(t);
+
+    // Resilience: Handle { "tool_name": { "args": ... } } format (hallucinated by smaller models)
+    if (parsed && typeof parsed === "object" && !parsed.tools && !Array.isArray(parsed)) {
+      const transformed = { tools: [] as any[] };
+      for (const [name, args] of Object.entries(parsed)) {
+        if (args && typeof args === "object") {
+          transformed.tools.push({ name, args });
+        }
+      }
+      if (transformed.tools.length > 0) {
+        parsed = transformed;
+      }
+    }
+
     const r = ChatPlannerSchema.safeParse(parsed);
     return r.success ? r.data : null;
   } catch {
@@ -198,8 +214,9 @@ export function defaultToolPlan(userQuery: string, clientTagIds?: string[]): Cha
     tools.push({ name: "get_production_metrics", args: prodArgs });
   }
 
-  if (!tools.some((t) => t.name === "get_tags")) {
-    tools.push({ name: "get_tags", args: { limit: 28 } });
+  if (q.includes("status") || q.includes("how is") || q.includes("current") || q.length < 40) {
+    tools.push({ name: "get_tags" });
+    tools.push({ name: "get_alerts" });
   }
 
   return tools.slice(0, 4);

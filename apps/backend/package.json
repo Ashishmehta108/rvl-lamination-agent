@@ -19,6 +19,9 @@
     "@fastify/helmet": "^13.0.0",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/websocket": "^11.2.0",
+    "@langchain/core": "0.3.80",
+    "@langchain/langgraph": "0.2.74",
+    "@langchain/ollama": "0.2.4",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@rvl/db-mongo": "0.0.0",
     "@rvl/db-postgres": "0.0.0",
@@ -40,6 +43,7 @@
     "@types/nodemailer": "^6.4.17",
     "eslint": "^9.26.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.5"
   }
 }

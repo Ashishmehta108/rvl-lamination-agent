@@ -195,7 +195,7 @@
     // Truncate extremely long inputs
     const truncated = raw.slice(0, MAX_INPUT_LEN);
   
-    // Strip known injection vectors
+    // Strip known injection vectors for the "clean" version used by LLM
     const clean = truncated
       .replace(/```[\s\S]*?```/g, "")
       .replace(/\[.*?\]\(.*?\)/g, "")
@@ -251,7 +251,7 @@
   ];
   
   const OUT_OF_SCOPE_PATTERNS = [
-    /\b(recipe|cook|weather|sports|news|stock|crypto|bitcoin|forex)\b/i,
+    /\b(recipe|cook|weather|sports|cricket|football|soccer|basketball|baseball|news|stock|crypto|bitcoin|forex)\b/i,
     /\b(movie|song|music|celebrity|politics|election)\b/i,
     /\b(write\s+code|debug\s+my|build\s+an?\s+app)\b/i,
     /\b(translate|grammar|essay|poem)\b/i,
@@ -265,7 +265,7 @@
   ];
   
   export function detectRisk(input: NormalizedInput): RiskAssessment {
-    const text = input.clean;
+    const text = input.raw;
   
     for (const p of INJECTION_PATTERNS) {
       if (p.test(text)) {
@@ -303,12 +303,27 @@
     const q = input.clean.toLowerCase();
     const tokens = new Set(input.tokens);
   
-    const wantsAlerts = /\b(alert|alerts|aler|alers|warning|warnings|critical|fired|fault|faults|alarm|alarms)\b/.test(q);
-    const wantsTags = /\b(tag|tags|value|values|reading|readings|sensor|current|show|list|all|dashboard|what is|what's)\b/.test(q)
+    const wantsAlertsBase = /\b(alert|alerts|aler|alers|warning|warnings|critical|fired|fault|faults|alarm|alarms)\b/.test(q);
+    const wantsTagsBase = (/\b(tag|tags|value|values|reading|readings|sensor|show|list|all|dashboard|what is|what's)\b/.test(q)
+      || (/\bcurrent\b/.test(q) && !wantsAlertsBase))
       || /\b(rpm|amp|mpm|speed|tension|gsm|gram|meter|voltage|pressure)\b/.test(q);
-    const wantsStatus = /\b(status|overview|how\s+is|running|health|state|right\s+now|situation)\b/.test(q);
-    const wantsReports = /\b(report|reports|run|runs|performance|summary|metrics|last\s+report)\b/.test(q);
-    const wantsProduction = /\b(production|meters|output|throughput|efficiency|daily|weekly|monthly)\b/.test(q);
+    const wantsStatusBase = /\b(status|overview|how\s+is|running|health|state|right\s+now|situation)\b/.test(q);
+    const wantsReportsBase = /\b(report|reports|run|runs|performance|summary|metrics|last\s+report)\b/.test(q);
+    const wantsProductionBase = /\b(production|meters|output|throughput|efficiency|daily|weekly|monthly)\b/.test(q);
+
+    // Follow-up detection for short queries like "28 april?" or "what about tags?"
+    const prev = previousQuery?.toLowerCase() ?? "";
+    const wasAlerts = /\b(alert|alerts|warning|critical|fired|fault|alarm)\b/.test(prev);
+    const wasProduction = /\b(production|meters|output|efficiency|daily|weekly|monthly)\b/.test(prev);
+    const wasReports = /\b(report|reports|run|runs)\b/.test(prev);
+    const isShortFollowUp = (input.wordCount <= 4 || (input.wordCount <= 6 && /\?$/.test(q))) &&
+      (/\b(and|what\s+about|how\s+about|for|on|at|in|with)\b/.test(q) || /^\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/.test(q) || /^\d{1,2}\/\d{1,2}/.test(q));
+
+    const wantsAlerts = wantsAlertsBase || (isShortFollowUp && wasAlerts);
+    const wantsTags = wantsTagsBase;
+    const wantsStatus = wantsStatusBase;
+    const wantsReports = wantsReportsBase || (isShortFollowUp && wasReports);
+    const wantsProduction = wantsProductionBase || (isShortFollowUp && wasProduction);
   
     const isGreeting = input.wordCount <= 6 && /^(hi|hello|hey|thanks|thank|good\s+(morning|evening|afternoon)|howdy|sup|yo)\b/.test(q);
     const isCorrection = /\b(wrong|incorrect|that'?s\s+not|actually|no[,\s]|mistake|you\s+said|but\s+you|it\s+(should|is)\s+actually)\b/.test(q);
@@ -335,6 +350,16 @@
       .map(t => t.toUpperCase())
       .filter(t => KNOWN_SLUGS.has(t));
   
+    if (q.includes("speed")) {
+      mentionedSlugs.push("MASTER_SPEED_PCT", "LAMINATOR_MPM", "EXTRUDER_RPM", "SPLICE_SPEED");
+    }
+    if (q.includes("tension")) {
+      mentionedSlugs.push("WINDER_TENSION_PCT", "UW_PV_TENSION", "UW_SET_TENSION");
+    }
+    if (q.includes("amp") || q.includes("load") || q.includes("current")) {
+      mentionedSlugs.push("EXTRUDER_AMP", "LAMINATOR_AMP", "WINDER_AMP");
+    }
+
     return {
       wantsAlerts,
       wantsTags,
@@ -376,20 +401,9 @@
       !c.text.includes("No tags found") &&
       !c.text.includes("No latest values found")
     );
-    const hasAlertData = liveContexts.some(c =>
-      c.source === "alerts_db" &&
-      !c.text.includes("No alerts found") &&
-      !c.text.includes("No open or recent")
-    );
-    const hasReportData = liveContexts.some(c =>
-      c.source === "reports_db" &&
-      !c.text.includes("No report runs")
-    );
-  const hasProductionData = liveContexts.some(c =>
-    c.source === "production_db" &&
-    !c.text.includes("No production metrics") &&
-    !c.text.includes("0 buckets")
-  );
+    const hasAlertData = liveContexts.some(c => c.source === "alerts_db" && !c.text.includes("Error:"));
+    const hasReportData = liveContexts.some(c => c.source === "reports_db" && !c.text.includes("Error:"));
+    const hasProductionData = liveContexts.some(c => c.source === "production_db" && !c.text.includes("Error:"));
   
     // Parse tag lines to detect staleness, faults, anomalies
     const tagBlock = liveContexts.find(c => c.source === "tags_db" || c.source === "tags_selected");
@@ -482,7 +496,8 @@
     input: NormalizedInput,
     risk: RiskAssessment,
     intent: IntentSignals,
-    ctx: ContextAssessment
+    ctx: ContextAssessment,
+    liveContexts: { source: string; text: string }[]
   ): HandlerDecision {
   
     // Hard blocks
@@ -537,6 +552,22 @@
       };
     }
   
+    if (intent.isRepeat) {
+      return {
+        handler: "repeated_question",
+        reason: "duplicate_query_detected",
+        requiresLlm: true,
+      };
+    }
+
+    if (intent.isMultiIntent) {
+      return {
+        handler: "multi_intent",
+        reason: "multiple_intents_detected",
+        requiresLlm: true,
+      };
+    }
+
     // Tool/context failures
     if (!ctx.hasTagData && !ctx.hasAlertData && !ctx.hasReportData && !ctx.hasProductionData) {
       return {
@@ -613,15 +644,7 @@
       };
     }
   
-    if (intent.isRepeat) {
-      return {
-        handler: "repeated_question",
-        reason: "same_query_as_previous",
-        requiresLlm: true,
-      };
-    }
-  
-  if (intent.wantsProduction) {
+    if (intent.wantsProduction) {
     return { handler: "status", reason: "production_intent_prioritized", requiresLlm: true };
   }
 
@@ -937,7 +960,8 @@ function capitalize(s: string): string {
   
     // Readings block (grouped into compact tables)
     let readingsBlock: string | null = null;
-    if (tags.length > 0 && (handler === "tags" || handler === "status")) {
+    const isBroadQuery = !intent.wantsAlerts && !intent.wantsProduction && !intent.wantsReports;
+    if (tags.length > 0 && (handler === "tags" || handler === "status" || (handler === "general" && isBroadQuery))) {
       const groups = new Map<string, ParsedTag[]>();
       const GROUP_ORDER = ["Extruder", "Laminator", "Winder", "Unwinder", "Splice", "Production", "Quality", "Safety", "General"];
       for (const t of tags) {
@@ -1040,7 +1064,8 @@ function capitalize(s: string): string {
     parts.push("PRODUCTION: unavailable");
   }
   
-    if (handler === "tags" || handler === "status") {
+    const isBroadQuery = !intent.wantsAlerts && !intent.wantsProduction && !intent.wantsReports;
+    if (handler === "tags" || handler === "status" || (handler === "general" && isBroadQuery)) {
       const relevant = intent.mentionedSlugs.length > 0
         ? tags.filter(t => intent.mentionedSlugs.includes(t.slug))
         : tags.slice(0, 12);

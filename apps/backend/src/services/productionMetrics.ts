@@ -4,6 +4,15 @@ export const TRACKED_SLUGS = ["RUNNING_METER", "EXTRUDER_RPM", "LAMINATOR_MPM", 
 
 export type ProductionGranularity = "daily" | "weekly" | "monthly";
 
+/** Parses 'YYYY-MM-DD' as local midnight. Avoids UTC shift bugs. */
+function parseLocalDate(s: string): Date {
+  if (!s) return new Date();
+  if (s.includes("T")) return new Date(s);
+  const parts = s.split("-").map(Number);
+  if (parts.length === 3) return new Date(parts[0]!, parts[1]! - 1, parts[2]!);
+  return new Date(s);
+}
+
 export type ProductionBucket = {
   key: string;
   label: string;
@@ -25,13 +34,14 @@ const MAX_SPAN_MS: Record<ProductionGranularity, number> = {
 const MAX_BUCKETS_EXPLICIT = 400;
 
 function periodExpression(granularity: ProductionGranularity): Record<string, unknown> {
+  const timezone = "Asia/Kolkata";
   if (granularity === "daily") {
-    return { $dateToString: { format: "%Y-%m-%d", date: "$ts", timezone: "UTC" } };
+    return { $dateToString: { format: "%Y-%m-%d", date: "$ts", timezone } };
   }
   if (granularity === "weekly") {
-    return { $dateToString: { format: "%G-W%V", date: "$ts", timezone: "UTC" } };
+    return { $dateToString: { format: "%G-W%V", date: "$ts", timezone } };
   }
-  return { $dateToString: { format: "%Y-%m", date: "$ts", timezone: "UTC" } };
+  return { $dateToString: { format: "%Y-%m", date: "$ts", timezone } };
 }
 
 function msPerBucket(granularity: ProductionGranularity): number {
@@ -106,12 +116,10 @@ function resolveTimeWindow(args: {
     !Number.isNaN(Date.parse(args.toISO));
 
   if (explicit) {
-    let from = new Date(args.fromISO!);
-    let to = new Date(args.toISO!);
-    if (from.getTime() > to.getTime()) {
-      const t = from;
-      from = to;
-      to = t;
+    let from = parseLocalDate(args.fromISO!);
+    let to = parseLocalDate(args.toISO!);
+    if (from.getTime() >= to.getTime()) {
+      to = new Date(from.getTime() + 24 * 60 * 60 * 1000);
     }
     const span = to.getTime() - from.getTime();
     const cap = MAX_SPAN_MS[args.granularity];

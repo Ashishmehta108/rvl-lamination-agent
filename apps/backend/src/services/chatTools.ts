@@ -1,6 +1,6 @@
 import { getMongoClient } from "@rvl/db-mongo";
 import { getPgDb, schema } from "@rvl/db-postgres";
-import { and, desc, eq, gte, ne } from "drizzle-orm";
+import { and, desc, eq, gte, lte, ne } from "drizzle-orm";
 import { aggregateProductionMetrics, type ProductionGranularity } from "./productionMetrics.js";
 
 export type FindTagCandidate = { tagId: string; slug: string; name: string; unit: string | null; score: number };
@@ -11,6 +11,22 @@ function tokenize(s: string): string[] {
     .replace(/[^a-z0-9_]+/g, " ")
     .split(/\s+/)
     .filter(Boolean);
+}
+
+/** Parses 'YYYY-MM-DD' or similar as local midnight. Avoids UTC shift bugs. */
+function parseLocalDate(s: string): Date {
+  if (!s) return new Date();
+  const clean = s.trim();
+  if (clean.includes("T")) return new Date(clean);
+
+  // Handle YYYY-MM-DD, YYYY/MM/DD, DD-MM-YYYY etc.
+  const parts = clean.split(/[-/]/).map(Number);
+  if (parts.length === 3) {
+    // Detect YYYY at start or end
+    if (parts[0]! > 1000) return new Date(parts[0]!, parts[1]! - 1, parts[2]!);
+    if (parts[2]! > 1000) return new Date(parts[2]!, parts[1]! - 1, parts[0]!);
+  }
+  return new Date(clean);
 }
 
 function scoreDef(query: string, slug: string, name: string): number {
@@ -32,6 +48,7 @@ function scoreDef(query: string, slug: string, name: string): number {
 
 /** Fuzzy match tag definitions by slug/name for the machine (any revision, best row per tagId). */
 export async function findTagsFuzzy(machineId: string, query: string, limit = 10): Promise<FindTagCandidate[]> {
+  console.log(`[chatTools:findTagsFuzzy] machineId="${machineId}" query="${query}" limit=${limit}`);
   const prisma = getMongoClient();
   const defs = await prisma.tagDefinition.findMany({
     where: { machineId },
@@ -46,9 +63,11 @@ export async function findTagsFuzzy(machineId: string, query: string, limit = 10
       bestByTag.set(d.tagId, { tagId: d.tagId, slug: d.slug, name: d.name ?? d.slug, unit: d.unit ?? null, score: sc });
     }
   }
-  return [...bestByTag.values()]
+  const result = [...bestByTag.values()]
     .sort((a, b) => b.score - a.score)
     .slice(0, Math.max(1, Math.min(20, limit)));
+  console.log(`[chatTools:findTagsFuzzy] found ${result.length} candidate(s)`);
+  return result;
 }
 
 function formatTagLines(
@@ -80,6 +99,8 @@ export async function toolGetTags(machineId: string, args: { tagIds?: string[]; 
   const prisma = getMongoClient();
   const tagIds = (args.tagIds ?? []).filter(Boolean).slice(0, 40);
 
+  console.log(`[chatTools:toolGetTags] machineId="${machineId}" tagIds=[${tagIds.join(", ")}] limit=${limit}`);
+
   const defs = await prisma.tagDefinition.findMany({
     where: { machineId },
     select: { tagId: true, slug: true, name: true, unit: true }
@@ -100,6 +121,8 @@ export async function toolGetTags(machineId: string, args: { tagIds?: string[]; 
     });
   }
 
+  console.log(`[chatTools:toolGetTags] found ${rows.length} row(s)`);
+
   if (rows.length === 0) return `LIVE TAG VALUES: No tags found for machine "${machineId}".`;
   return formatTagLines(machineId, rows as any[], defMap);
 }
@@ -113,23 +136,29 @@ export async function toolGetAlerts(
   // Date-range mode: query alerts within a specific window
   const hasDateRange = args.from && !Number.isNaN(Date.parse(args.from));
   if (hasDateRange) {
-    const rangeStart = new Date(args.from!);
-    const rangeEnd = args.to && !Number.isNaN(Date.parse(args.to))
-      ? new Date(args.to)
-      : new Date(rangeStart.getTime() + 24 * 60 * 60 * 1000); // default: +24h
+    const rangeStart = parseLocalDate(args.from!);
+    let rangeEnd = args.to ? parseLocalDate(args.to) : new Date(rangeStart.getTime() + 24 * 60 * 60 * 1000);
 
+    // If range is zero-width or negative, expand it to cover the full day
+    if (rangeEnd.getTime() <= rangeStart.getTime()) {
+      rangeEnd = new Date(rangeStart.getTime() + 24 * 60 * 60 * 1000);
+    }
+
+    console.log(`[toolGetAlerts] query machineId="${machineId}" from=${rangeStart.toISOString()} to=${rangeEnd.toISOString()}`);
     const rows = await db
       .select()
       .from(schema.alertEvents)
       .where(
         and(
-          eq(schema.alertEvents.machineId, machineId),
+          eq(schema.alertEvents.machineId, machineId.trim()),
           gte(schema.alertEvents.startsAt, rangeStart),
           lte(schema.alertEvents.startsAt, rangeEnd)
         )
       )
       .orderBy(desc(schema.alertEvents.startsAt))
       .limit(50);
+
+    console.log(`[toolGetAlerts] found ${rows.length} rows`);
 
     const label = rangeStart.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "long", year: "numeric" });
     if (rows.length === 0) {
@@ -144,6 +173,7 @@ export async function toolGetAlerts(
 
   // Default mode: open alerts + recent closed
   const includeRecent = args.includeRecentClosed !== false;
+  console.log(`[chatTools:toolGetAlerts] machineId="${machineId}" default mode (includeRecent=${includeRecent})`);
   const openRows = await db
     .select()
     .from(schema.alertEvents)
@@ -177,6 +207,8 @@ export async function toolGetAlerts(
     if (!seen.has(r.id)) { seen.add(r.id); merged.push(r); }
   }
 
+  console.log(`[chatTools:toolGetAlerts] found ${merged.length} alert(s) (open=${openRows.length}, recentClosed=${recentClosed.length})`);
+
   if (merged.length === 0) {
     return `ALERTS: No open or recent (24h) alerts for machine "${machineId}".`;
   }
@@ -190,6 +222,7 @@ export async function toolGetAlerts(
 
 export async function toolGetReports(machineId: string, args: { limit?: number }): Promise<string> {
   const limit = Math.min(20, Math.max(1, Number(args.limit ?? 8) || 8));
+  console.log(`[chatTools:toolGetReports] machineId="${machineId}" limit=${limit}`);
   const db = getPgDb();
   const runs = await db
     .select({
@@ -205,6 +238,7 @@ export async function toolGetReports(machineId: string, args: { limit?: number }
     .orderBy(desc(schema.reportRuns.createdAt))
     .limit(limit);
 
+  console.log(`[chatTools:toolGetReports] found ${runs.length} run(s)`);
   if (runs.length === 0) return `REPORTS: No report runs for machine "${machineId}".`;
   const lines = runs.map(
     (r, i) =>
@@ -220,6 +254,7 @@ export async function toolGetProductionMetrics(
   const g = String(args.granularity ?? "daily").toLowerCase();
   const granularity = (g === "weekly" || g === "monthly" ? g : "daily") as ProductionGranularity;
   const buckets = Math.min(90, Math.max(1, Number(args.buckets ?? 14) || 14));
+  console.log(`[chatTools:toolGetProductionMetrics] machineId="${machineId}" granularity="${granularity}" buckets=${buckets} from=${args.from} to=${args.to}`);
   const r = await aggregateProductionMetrics({
     machineId,
     granularity,
@@ -227,6 +262,7 @@ export async function toolGetProductionMetrics(
     fromISO: args.from ?? null,
     toISO: args.to ?? null,
   });
+  console.log(`[chatTools:toolGetProductionMetrics] returned ${r.buckets.length} bucket(s)`);
   if (r.buckets.length === 0) {
     return `PRODUCTION METRICS (${granularity}): No production data available for "${machineId}" in the requested window.`;
   }
@@ -252,6 +288,7 @@ export type ToolExecResult = { name: string; text: string; findResult?: FindTagC
 
 export async function executeChatTool(machineId: string, call: ChatToolCall): Promise<ToolExecResult> {
   const args = call.args ?? {};
+  console.log(`[chatTools:executeChatTool] name="${call.name}" args=${JSON.stringify(args)}`);
   switch (call.name) {
     case "find_tags": {
       const q = String((args as any).query ?? "");
@@ -297,6 +334,7 @@ export async function executeChatTool(machineId: string, call: ChatToolCall): Pr
       return { name: call.name, text };
     }
     default:
+      console.warn(`[chatTools:executeChatTool] unknown tool name="${call.name}"`);
       return { name: String(call.name), text: `Unknown tool: ${String((call as any).name)}` };
   }
 }
@@ -306,6 +344,7 @@ export async function runToolPlan(
   machineId: string,
   calls: ChatToolCall[]
 ): Promise<{ blocks: { name: string; text: string }[]; findCandidates: FindTagCandidate[] }> {
+  console.log(`[chatTools:runToolPlan] machineId="${machineId}" executing ${calls.length} call(s)`);
   const blocks: { name: string; text: string }[] = [];
   let lastFind: FindTagCandidate[] = [];
 
@@ -316,6 +355,7 @@ export async function runToolPlan(
       if (!hasIds && lastFind.length > 0) {
         const top = lastFind.filter((c) => c.score >= 8).slice(0, 8);
         if (top.length > 0) {
+          console.log(`[chatTools:runToolPlan] auto-filling get_tags.tagIds with ${top.length} candidates from find_tags`);
           (call.args as any).tagIds = top.map((c) => c.tagId);
         }
       }
@@ -325,5 +365,6 @@ export async function runToolPlan(
     blocks.push({ name: out.name, text: out.text });
   }
 
+  console.log(`[chatTools:runToolPlan] completed ${blocks.length} block(s)`);
   return { blocks, findCandidates: lastFind };
 }

@@ -19,16 +19,17 @@ const BASE_PERSONA =
   "You are Ravi, the RVL Lamination Assistant. Calm, experienced, direct. Lead with the answer and stay grounded in supplied evidence only.";
 
 const HANDLER_HINTS: Partial<Record<HandlerType, string>> = {
-  alerts: "Focus on the alert situation. Name the most important alert first.",
+  alerts: "Focus on the alert situation. ALWAYS list the alerts clearly (use a markdown table if there are multiple). Mention title, severity, and time.",
+  tags: "State the specific tag values requested. If the request is broad (like 'speed'), provide all relevant speed readings (RPM, MPM, etc.) clearly.",
   stale_data: "Lead with the fact that data may be stale. Do not present stale readings as current truth.",
   partial_telemetry: "Acknowledge that only partial telemetry is available.",
   conflicting_context: "Surface the discrepancy clearly instead of resolving it.",
   user_correction: "Acknowledge the correction and restate current facts only.",
-  multi_intent: "Answer the primary operational need first, then briefly cover the second intent if evidence exists.",
+  multi_intent: "Answer the primary operational need first. If alerts are present, prioritize showing them clearly.",
 };
 
 const SMALL_MODEL_HINT =
-  "\nMODEL MODE:\nUse very short sentences. Prefer clarity over completeness. Never improvise beyond provided facts.";
+  "\nMODEL MODE:\nPrefer clarity over completeness. Never improvise beyond provided facts.";
 const STANDARD_HINT =
   "\nMODEL MODE:\nAnswer clearly and directly. Stay grounded in evidence. Do not invent or extrapolate.";
 
@@ -54,6 +55,7 @@ export const REPORT_OVERVIEW_PROMPT_ID = "report_overview_v1";
 export const REPORT_ALERTS_PROMPT_ID = "report_alerts_v1";
 export const REPORT_TAGS_PROMPT_ID = "report_tags_v1";
 export const REPORT_RECOMMENDATIONS_PROMPT_ID = "report_recommendations_v1";
+export const REPORT_PRODUCTION_PROMPT_ID = "report_production_v1";
 
 register({
   id: REPORT_OVERVIEW_PROMPT_ID,
@@ -131,6 +133,29 @@ Facts provided: Summary of alerts and latest tags.
 Hard rules: Output ONLY HTML fragment. No markdown fences. Use only <h3>, <h4>, <p>, <ul>, <li>, <strong>.`,
 });
 
+register({
+  id: REPORT_PRODUCTION_PROMPT_ID,
+  version: "v1",
+  mode: "standard",
+  modelTarget: "any",
+  maxTokens: 512,
+  metadata: {
+    owner: "report-pipeline",
+    purpose: "Analyze production throughput trends and consistency",
+    lastUpdated: "2026-04-28",
+    smallModelVariant: false,
+  },
+  systemPrompt: `You are an industrial reporting agent.
+Task: Analyze the PRODUCTION METRICS provided. Comment on throughput trends (meters produced), speed consistency (RPM/MPM), and GSM quality stability.
+Style: Use <h3>Production Analysis</h3> as heading. 2-3 paragraphs max. Mention specific numbers.
+Facts provided: Daily, weekly, and monthly production aggregates.
+Hard rules: Output ONLY HTML fragment. No markdown fences. Use only <h3>, <h4>, <p>, <ul>, <li>, <strong>.`,
+});
+
+export function getReportPrompt(id: string): string {
+  return registry.get(id)?.systemPrompt ?? "";
+}
+
 // ─── Chat Prompt Builders ─────────────────────────────────────────────────────
 
 export function buildChatPromptDescriptor(
@@ -143,20 +168,32 @@ export function buildChatPromptDescriptor(
     : "";
   const modeHint = mode === "small-model" ? SMALL_MODEL_HINT : STANDARD_HINT;
 
+  const sentenceLimit = (packet.handler === "alerts" || packet.handler === "multi_intent") ? "" : " (2-4 sentences only)";
+
+  const hasPreRendered = packet.preRendered.alertsBlock || packet.preRendered.productionBlock || packet.preRendered.readingsBlock || packet.preRendered.watchBlock;
+
+  const evidenceParts = [
+    !hasPreRendered && packet.brief,
+    packet.preRendered.alertsBlock,
+    packet.preRendered.productionBlock,
+    packet.preRendered.readingsBlock || packet.preRendered.watchBlock,
+  ].filter(Boolean);
+  const evidenceText = evidenceParts.join("\n\n");
+
   const id = `chat.${packet.handler}.${mode}`;
   const desc: PromptDescriptor = {
     id,
     version: "v1",
     mode,
     modelTarget: mode === "small-model" ? "small" : "any",
-    maxTokens: mode === "small-model" ? 350 : 600,
+    maxTokens: mode === "small-model" ? 512 : 800,
     metadata: {
       owner: "chat-pipeline",
       purpose: `Chat prompt for handler=${packet.handler} mode=${mode}`,
       lastUpdated: "2026-04-28",
       smallModelVariant: mode === "small-model",
     },
-    systemPrompt: `${BASE_PERSONA}${modeHint}${handlerHint}\n\nRULES:\n${constraintBlock}\n\nBRIEF:\n${packet.brief}\n\nWrite your response now (2-4 sentences only):`,
+    systemPrompt: `${BASE_PERSONA}${modeHint}${handlerHint}\n\nRULES:\n${constraintBlock}\n\nEVIDENCE:\n${evidenceText}\n\nTASK:\nAnswer the user query precisely using the EVIDENCE above. If specific values (like speed, tension, or meter readings) are requested, list them clearly with their units. Do not just say you have the data; show the data.\n\nWrite your response now${sentenceLimit}:`,
   };
   register(desc); // auto-register for snapshot test discovery
   return desc;

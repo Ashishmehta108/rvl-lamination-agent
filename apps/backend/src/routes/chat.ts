@@ -862,11 +862,18 @@
 //       if (useToolPipeline) {
 //         const runTools = async () => {
 //           const tP = Date.now();
-//           const plannerUser = `User machineId: "${machineId}"\nUser message:\n${lastUser.content}`;
+//           const intentLabels = [
+//             intent.wantsAlerts && "alerts",
+//             intent.wantsTags && "tag_values",
+//             intent.wantsStatus && "overall_status",
+//             intent.wantsReports && "reports",
+//             intent.wantsProduction && "production_metrics",
+//           ].filter(Boolean);
+//
 //           plannerRaw = await chatOnceWithModel(
 //             [
 //               { role: "system", content: PLANNER_SYSTEM },
-//               { role: "user", content: plannerUser },
+//               { role: "user", content: `Context: user wants [${intentLabels.join(", ")}]. Query: ${lastUser.content}` },
 //             ],
 //             config.ollamaModel,
 //             { numCtx: config.ollamaNumCtx, temperature: 0, topP: config.ollamaTopP, repeatPenalty: config.ollamaRepeatPenalty }
@@ -1074,139 +1081,13 @@
 import type { FastifyInstance } from "fastify";
 import { ChatRequestSchema } from "@rvl/shared";
 import { requireApiAuth, validateMachineAccess } from "../auth.js";
-import { ragQuery } from "../rag/store.js";
-import { chatOnce, chatOnceWithModel } from "../llm/ollama.js";
 import { config } from "../config.js";
-import { fetchLiveContext } from "./chatContext.js";
-import {
-  defaultToolPlan,
-  parsePlannerJson,
-  PLANNER_SYSTEM,
-  wantsToolPipeline,
-} from "../services/chatPlanner.js";
-import { runToolPlan, type ChatToolCall, type FindTagCandidate } from "../services/chatTools.js";
 import {
   buildChatSessionKey,
   getChatHistoryCached,
   putChatHistoryCached,
-  type ChatHistoryMessage,
 } from "../services/chatHistoryCache.js";
-import {
-  normalizeInput,
-  detectRisk,
-  detectIntent,
-  detectMissingContext,
-  selectHandler,
-  buildContextPacket,
-  assembleFinalResponse,
-  validateOutput,
-  // Fully deterministic handlers (no LLM)
-  handleGreeting,
-  handleEscalation,
-  handleUnsafeInput,
-  handleOutOfScope,
-  handleAmbiguous,
-  handleNoContext,
-  handleToolFailure,
-  type HandlerType,
-} from "../handlers/chatHandler.js";
-import { enforceGroundingGuard } from "../services/groundingGuard.js";
-import {
-  deriveHealthFromLiveContexts,
-  prepareTurn,
-} from "../services/llmOrchestrator.js";
-
-/* ─────────────────────────────────────────────────────────────────
-   UTILITY
-   ───────────────────────────────────────────────────────────────── */
-
-function toolBlocksToLiveContexts(
-  toolBlocks: { name: string; text: string }[]
-): { source: string; text: string }[] {
-  return toolBlocks
-    .filter(b => b.name !== "find_tags")
-    .map(b => ({
-      source:
-        b.name === "get_tags" ? "tags_db"
-          : b.name === "get_alerts" ? "alerts_db"
-            : b.name === "get_reports" ? "reports_db"
-              : b.name === "get_production_metrics" ? "production_db"
-                : `tool_${b.name}`,
-      text: b.text,
-    }));
-}
-
-function deriveHealth(
-  liveContexts: { source: string; text: string }[]
-): "healthy" | "degraded" | "critical" | "unknown" {
-  const alertBlock = liveContexts.find(c => c.source === "alerts_db");
-  const tagBlock = liveContexts.find(c => c.source === "tags_db" || c.source === "tags_selected");
-
-  if (!tagBlock && !alertBlock) return "unknown";
-
-  if (alertBlock && alertBlock.text) {
-    if (/\[CRITICAL\].*status:\s*open/i.test(alertBlock.text)) return "critical";
-    if (/\[WARNING\].*status:\s*open/i.test(alertBlock.text)) return "degraded";
-  }
-
-  if (tagBlock && tagBlock.text) {
-    // Check for active fault flags
-    if (/:\s*1\s*\[/.test(tagBlock.text) && /(FAULT|ALARM_IND|EMG_STOP)/.test(tagBlock.text)) {
-      return "degraded";
-    }
-  }
-
-  if (tagBlock && tagBlock.text && !tagBlock.text.includes("No tags found")) return "healthy";
-
-  return "unknown";
-}
-
-function needsCitationGuard(answer: string, ragCount: number): string {
-  if (ragCount === 0) return answer;
-  if (/\[#\d+\]/.test(answer)) return answer;
-  return `${answer}\n\n_No document citations detected — verify critical values against primary systems._`;
-}
-
-/**
- * Prevent contradictory fallback text when tool data actually exists.
- * If we already have live context, never allow "can't access live data" style answers.
- */
-function replaceUngroundedNoDataClaims(
-  answer: string,
-  hasLiveData: boolean,
-  groundedFallback: string
-): string {
-  if (!hasLiveData) return answer;
-  const badClaimPattern =
-    /\b(tool[_\s-]*pipeline.*did(?:\s+not|n't)\s+respond|unable(?:\s+at\s+this\s+moment)?|cannot\s+provide.*real[-\s]*time|can't\s+provide.*live\s+data|try\s+again\s+later.*live\s+data|i\s+don't\s+have\s+enough\s+data\s+to\s+answer\s+that\s+right\s+now|no\s+(additional\s+)?production\s+data|halts?\s+production\s+operations?|no\s+further\s+production\s+data\s+can\s+be\s+provided)\b/i;
-  return badClaimPattern.test(answer) ? groundedFallback : answer;
-}
-
-function buildAvailableDataFallback(
-  liveContexts: { source: string; text: string }[],
-  health: "healthy" | "degraded" | "critical" | "unknown"
-): string {
-  const hasTags = liveContexts.some(c => c.source === "tags_db" || c.source === "tags_selected");
-  const hasAlerts = liveContexts.some(c => c.source === "alerts_db");
-  const hasReports = liveContexts.some(c => c.source === "reports_db");
-  const hasProduction = liveContexts.some(c => c.source === "production_db");
-  const parts: string[] = [];
-
-  if (hasAlerts) parts.push("alerts");
-  if (hasTags) parts.push("tag readings");
-  if (hasProduction) parts.push("production metrics");
-  if (hasReports) parts.push("report history");
-
-  if (parts.length === 0) {
-    return "I couldn't extract a reliable machine summary from the current context. Please ask for alerts, tags, or production metrics explicitly.";
-  }
-
-  const joined = parts.length === 1
-    ? parts[0]
-    : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
-
-  return `Live data available: ${joined}. Current machine health: ${health}.`;
-}
+import { runChatPipeline } from "../agent/graph.js";
 
 /* ─────────────────────────────────────────────────────────────────
    ROUTE REGISTRATION
@@ -1253,6 +1134,8 @@ export async function registerChatRoutes(app: FastifyInstance) {
 
       if (reqBody.machineId) validateMachineAccess(reqBody.machineId);
       const machineId = reqBody.machineId || "lamination-01";
+
+      // ── Session key ───────────────────────────────────────────────
       const rawAuth = req.headers["authorization"] ?? req.headers["Authorization"] ?? "";
       const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth;
       const rawSession = req.headers["x-chat-session-id"];
@@ -1263,337 +1146,53 @@ export async function registerChatRoutes(app: FastifyInstance) {
         authHeader: typeof authHeader === "string" ? authHeader : null,
         ip: req.ip,
       });
+
       const cachedHistory = getChatHistoryCached(sessionKey);
 
-      const lastUser = [...reqBody.messages].reverse().find(m => m.role === "user");
+      // ── Extract last user message ─────────────────────────────────
+      const lastUser = [...reqBody.messages].reverse().find((m) => m.role === "user");
       if (!lastUser) return reply.code(400).send({ error: "no_user_message" });
 
       reqLog.info({ query: lastUser.content.slice(0, 120) }, "chat_user_query");
 
-      // ── PIPELINE STEP 1: Normalize input ─────────────────────────
-      const normalized = normalizeInput(lastUser.content);
-
-      // ── PIPELINE STEP 2: Risk detection ──────────────────────────
-      const risk = detectRisk(normalized);
-
-      if (risk.block) {
-        reqLog.warn({ reason: risk.reason }, "chat_blocked_unsafe_input");
-        return reply.send({
-          answer: handleUnsafeInput(),
-          grounded: false,
-          health: "unknown",
-          steps: [],
-          citations: [],
-          contextBlocks: [],
-        });
-      }
-
-      // ── PIPELINE STEP 3: Intent detection ────────────────────────
-      const previousQuery = reqBody.messages.length >= 2
-        ? reqBody.messages[reqBody.messages.length - 2]?.content
-        : undefined;
-      const intent = detectIntent(normalized, previousQuery);
-
-      // ── Short-circuit: fully deterministic handlers ───────────────
-      if (intent.isGreeting) {
-        return reply.send({
-          answer: handleGreeting("RVL Laminator"),
-          grounded: false,
-          health: "unknown",
-          steps: [],
-          citations: [],
-          contextBlocks: [],
-        });
-      }
-
-      if (intent.isEscalation) {
-        return reply.send({
-          answer: handleEscalation(),
-          grounded: false,
-          health: "unknown",
-          steps: [],
-          citations: [],
-          contextBlocks: [],
-        });
-      }
-
-      if (intent.isOutOfScope) {
-        return reply.send({
-          answer: handleOutOfScope(),
-          grounded: false,
-          health: "unknown",
-          steps: [],
-          citations: [],
-          contextBlocks: [],
-        });
-      }
-
-      const useToolPipeline = wantsToolPipeline(lastUser.content, reqBody.tagIds) && !intent.isGreeting;
-
-      // ── Fetch context ─────────────────────────────────────────────
-      const tFetch = Date.now();
-
-      const ragPromise = ragQuery({
-        query: lastUser.content,
-        machineId: reqBody.machineId,
-        tagIds: reqBody.tagIds,
-        topK: config.ragTopK,
-      }).catch(err => {
-        reqLog.warn({ err: String(err) }, "rag_query_failed");
-        return [] as { text: string; chunkId: string; sourceUri?: string }[];
-      });
-
-      let ragContexts: { text: string; chunkId: string; sourceUri?: string }[] = [];
-      let liveContexts: { source: string; text: string }[] = [];
-      let toolBlocks: { name: string; text: string }[] = [];
-      let findCandidates: FindTagCandidate[] = [];
-      let plannerRaw = "";
-      let plannerCalls: ChatToolCall[] = [];
-      let plannerMs = 0;
-      let toolsExecMs = 0;
-
-      if (useToolPipeline) {
-        const runTools = async () => {
-          const tP = Date.now();
-          const plannerUser = `Machine ID: "${machineId}"\nUser query: ${normalized.clean}`;
-          let plannerOutput = "";
-          try {
-            plannerOutput = await chatOnceWithModel(
-              [
-                { role: "system", content: PLANNER_SYSTEM },
-                { role: "user", content: plannerUser },
-              ],
-              config.ollamaModel,
-              {
-                numCtx: config.ollamaNumCtx,
-                temperature: 0,
-                topP: config.ollamaTopP,
-                repeatPenalty: config.ollamaRepeatPenalty,
-              }
-            );
-          } catch (err) {
-            reqLog.warn({ err: String(err) }, "planner_llm_failed");
-          }
-          plannerRaw = plannerOutput;
-          plannerMs = Date.now() - tP;
-
-          const plan = parsePlannerJson(plannerRaw);
-          const calls: ChatToolCall[] =
-            plan?.tools?.length && plan.tools.length > 0
-              ? plan.tools
-              : defaultToolPlan(lastUser.content, reqBody.tagIds);
-
-          plannerCalls = calls;
-
-          const tExec = Date.now();
-          let out: Awaited<ReturnType<typeof runToolPlan>>;
-          try {
-            out = await runToolPlan(machineId, calls);
-          } catch (err) {
-            reqLog.warn({ err: String(err) }, "tool_plan_exec_failed");
-            out = { blocks: [], findCandidates: [] };
-          }
-          toolsExecMs = Date.now() - tExec;
-          return out;
-        };
-
-        const [ragRes, toolOut] = await Promise.all([ragPromise, runTools()]);
-        ragContexts = ragRes;
-        toolBlocks = toolOut.blocks;
-        findCandidates = toolOut.findCandidates;
-        liveContexts = toolBlocksToLiveContexts(toolBlocks);
-      } else {
-        const [ragRes, liveRes] = await Promise.all([
-          ragPromise,
-          fetchLiveContext(lastUser.content, machineId, { tagIds: reqBody.tagIds }).catch(err => {
-            reqLog.warn({ err: String(err) }, "live_context_failed");
-            return [] as { source: string; text: string }[];
-          }),
-        ]);
-        ragContexts = ragRes;
-        liveContexts = liveRes;
-      }
-
-      const fetchMs = Date.now() - tFetch;
-      const hasLiveTags = liveContexts.some(
-        c => c.source === "tags_db" || c.source === "tags_selected"
-      );
-      const hasLiveData = liveContexts.length > 0;
-
-      reqLog.info(
-        {
-          fetchMs,
-          toolPipeline: useToolPipeline,
-          ragChunks: ragContexts.length,
-          hasTagContext: hasLiveTags,
-          liveSources: liveContexts.map(c => c.source),
-        },
-        "context_retrieval_done"
-      );
-
-      // ── PIPELINE STEP 4: Detect missing context ───────────────────
-      const ctxAssessment = detectMissingContext(liveContexts, intent);
-
-      // ── PIPELINE STEP 5: Select handler ──────────────────────────
-      const handlerDecision = selectHandler(normalized, risk, intent, ctxAssessment);
-
-      reqLog.info(
-        { handler: handlerDecision.handler, reason: handlerDecision.reason },
-        "handler_selected"
-      );
-
-      // Short-circuit: handler has a deterministic fallback answer
-      if (!handlerDecision.requiresLlm && handlerDecision.fallbackAnswer) {
-        return reply.send({
-          answer: handlerDecision.fallbackAnswer,
-          grounded: false,
-          health: deriveHealthFromLiveContexts(liveContexts),
-          steps: [{ tool: "handler", label: handlerDecision.handler, durationMs: Date.now() - t0 }],
-          citations: [],
-          contextBlocks: [],
-          handler: handlerDecision.handler,
-        });
-      }
-
-      // No-context edge case
-      if (handlerDecision.handler === "no_context" && !handlerDecision.requiresLlm) {
-        return reply.send({
-          answer: handleNoContext(),
-          grounded: false,
-          health: "unknown",
-          steps: [],
-          citations: [],
-          contextBlocks: [],
-        });
-      }
-
-      // ── PIPELINE STEP 6: Build context packet ────────────────────
-      const capturedAt = new Date().toLocaleTimeString("en-IN", {
-        timeZone: "Asia/Kolkata",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-
-      const health = deriveHealthFromLiveContexts(liveContexts);
-
-      const contextPacket = buildContextPacket(
-        handlerDecision,
-        normalized,
-        intent,
-        ctxAssessment,
-        liveContexts,
-        machineId,
-        capturedAt,
-        health
-      );
-
-      // ── PIPELINE STEP 7: Build LLM prompt ────────────────────────
-      // Tool pipeline with live tags → compact two-phase prompt
-      // RAG-only or no tags → legacy document-grounded prompt
-      const useTwoPhase = useToolPipeline && hasLiveData;
-
-      const preparedTurn = prepareTurn({
-        useTwoPhase,
-        contextPacket,
-        handler: handlerDecision.handler,
-        reqMessages: reqBody.messages,
-        cachedMessages: cachedHistory?.machineId === machineId ? cachedHistory.messages : [],
-        liveContexts,
-        ragContexts,
-      });
-      const messages = preparedTurn.messages;
-
-      reqLog.info(
-        {
-          model: config.ollamaModel,
-          historyMsgs: messages.length,
-          cachedHistoryMsgs: cachedHistory?.messages.length ?? 0,
-          systemPromptLen: preparedTurn.systemPrompt.length,
-          estimatedTokens: preparedTurn.estimatedTokens,
-          promptId: preparedTurn.promptId,
-          useTwoPhase,
-          handler: handlerDecision.handler,
-        },
-        "llm_request_starting"
-      );
-
-      // ── PIPELINE STEP 7: LLM call ─────────────────────────────────
-      let rawAnswer: string;
-      const tLlm = Date.now();
+      // ── Run the LangGraph pipeline ────────────────────────────────
+      let result: Awaited<ReturnType<typeof runChatPipeline>>;
       try {
-        rawAnswer = await chatOnce(messages);
-      } catch (err) {
-        reqLog.error({ err: String(err), llmMs: Date.now() - tLlm }, "llm_chat_failed");
-        // Use deterministic fallback — do NOT fail the request
-        rawAnswer = "";
-      }
-      const llmMs = Date.now() - tLlm;
-
-      // ── PIPELINE STEP 8: Validate LLM output ─────────────────────
-      const validation = validateOutput(rawAnswer, contextPacket, liveContexts);
-      const grounded =
-        validation.valid
-          ? enforceGroundingGuard(validation.cleaned, contextPacket, liveContexts)
-          : { valid: false, reason: `validation_failed:${validation.reason}`, cleaned: validation.cleaned };
-
-      if (!validation.valid || !grounded.valid) {
-        reqLog.warn(
+        result = await runChatPipeline(
           {
-            reason: !validation.valid ? validation.reason : grounded.reason,
-            validationReason: validation.reason,
-            groundingReason: grounded.reason,
-            handler: handlerDecision.handler,
+            message: lastUser.content,
+            machineId,
+            sessionId: typeof sessionHeader === "string" ? sessionHeader : undefined,
+            tagIds: reqBody.tagIds,
+            requestedAt: new Date().toISOString(),
           },
-          "llm_output_failed_validation"
+          sessionKey,
+          cachedHistory?.machineId === machineId ? cachedHistory.messages : []
         );
-      }
-
-      const narrative = validation.valid && grounded.valid ? grounded.cleaned : contextPacket.fallback;
-
-      // ── PIPELINE STEP 9: Assemble final answer ────────────────────
-      let answer: string;
-
-      if (useTwoPhase) {
-        answer = assembleFinalResponse(narrative, contextPacket, handlerDecision);
-      } else {
-        // RAG path: just clean and guard
-        answer = validation.valid ? validation.cleaned : contextPacket.fallback;
-        if (ragContexts.length > 0) {
-          answer = needsCitationGuard(answer, ragContexts.length);
-        }
-      }
-
-      // If tools returned live context, block contradictory "no live data" wording.
-      answer = replaceUngroundedNoDataClaims(
-        answer,
-        hasLiveData,
-        buildAvailableDataFallback(liveContexts, health)
-      );
-
-      // Final length guard — if still empty, use fallback
-      if (!answer || answer.trim().length < 5) {
-        answer = contextPacket.fallback;
+      } catch (err) {
+        reqLog.error({ err: String(err), totalMs: Date.now() - t0 }, "agent_pipeline_failed");
+        return reply.code(503).send({ error: "pipeline_error", message: "The agent pipeline failed unexpectedly." });
       }
 
       reqLog.info(
         {
-          llmMs,
-          totalMs: Date.now() - t0,
-          answerLen: answer.length,
-          answerPreview: answer.slice(0, 150),
-          grounded: ragContexts.length > 0 || hasLiveData,
-          useTwoPhase,
-          handler: handlerDecision.handler,
-          validationOk: validation.valid && grounded.valid,
+          traceId: result.traceId,
+          handler: result.handler,
+          fallbackUsed: result.fallbackUsed,
+          groundingConfidence: result.groundingConfidence,
+          totalMs: result.totalLatencyMs,
+          answerLen: result.answer.length,
+          answerPreview: result.answer.slice(0, 150),
         },
         "chat_response_ready"
       );
 
+      // ── Persist to history cache ──────────────────────────────────
       const now = Date.now();
-      const historyToPersist: ChatHistoryMessage[] = [
+      const historyToPersist = [
         ...(cachedHistory?.machineId === machineId ? cachedHistory.messages : []),
-        { role: "user", content: lastUser.content, timestamp: now },
-        { role: "assistant", content: answer, timestamp: now },
+        { role: "user" as const, content: lastUser.content, timestamp: now },
+        { role: "assistant" as const, content: result.answer, timestamp: now },
       ];
       try {
         putChatHistoryCached(sessionKey, machineId, historyToPersist, now);
@@ -1602,153 +1201,20 @@ export async function registerChatRoutes(app: FastifyInstance) {
       }
 
       reply.header("x-correlation-id", req.id);
-
-      // ── Build steps for UI ────────────────────────────────────────
-      const steps: { tool: string; label: string; durationMs: number }[] = [];
-
-      if (ragContexts.length > 0) {
-        steps.push({
-          tool: "rag_search",
-          label: `Searched ${ragContexts.length} documents`,
-          durationMs: fetchMs,
-        });
-      }
-
-      if (useToolPipeline) {
-        steps.push({ tool: "planner", label: "Planned tool calls", durationMs: plannerMs });
-        const perToolMs = toolBlocks.length > 0
-          ? Math.max(1, Math.round(toolsExecMs / toolBlocks.length))
-          : toolsExecMs;
-        for (const b of toolBlocks) {
-          steps.push({
-            tool: b.name,
-            label: TOOL_LABEL[b.name] ?? `Ran tool ${b.name}`,
-            durationMs: perToolMs,
-          });
-        }
-      } else {
-        for (const lc of liveContexts) {
-          steps.push({
-            tool: lc.source,
-            label: LIVE_CONTEXT_LABEL[lc.source] ?? `Queried ${lc.source}`,
-            durationMs: fetchMs,
-          });
-        }
-      }
-
-      steps.push({
-        tool: "llm",
-        label: `Generated response (${config.ollamaModel})`,
-        durationMs: llmMs,
-      });
-
-      // ── Build response payload ────────────────────────────────────
-      const tagBlocks = liveContexts.filter(
-        c => c.source === "tags_db" || c.source === "tags_selected"
-      );
-      const liveTagLineCount = tagBlocks.reduce(
-        (n, c) => n + (c.text.match(/\n/g)?.length ?? 0) + 1,
-        0
-      );
-
-      const contextBlocks = liveContexts
-        .filter(c => c.source !== "tool_find_tags")
-        .map(c => ({
-          source: c.source,
-          preview: c.text.length > 600 ? `${c.text.slice(0, 600)}…` : c.text,
-        }));
-
-      const ranFindTags = toolBlocks.some(b => b.name === "find_tags");
-      const findCandidatesOut =
-        useToolPipeline && ranFindTags && findCandidates.length > 0
-          ? findCandidates.slice(0, 12).map(c => ({
-            tagId: c.tagId,
-            slug: c.slug,
-            name: c.name,
-            unit: c.unit,
-            score: c.score,
-          }))
-          : undefined;
+      reply.header("x-trace-id", result.traceId);
 
       return reply.send({
-        answer,
-        grounded: ragContexts.length > 0 || hasLiveData,
-        health,
-        handler: handlerDecision.handler,
-        steps,
-        citations: ragContexts.map((c, i) => ({
-          index: i + 1,
-          chunkId: c.chunkId,
-          sourceUri: c.sourceUri ?? null,
-        })),
-        contextBlocks,
-        liveTagCount: tagBlocks.length > 0 ? liveTagLineCount : undefined,
-        toolPlan: useToolPipeline
-          ? { raw: plannerRaw, tools: plannerCalls }
-          : undefined,
-        findCandidates: findCandidatesOut,
+        answer: result.answer,
+        grounded: result.groundingConfidence !== "insufficient",
+        health: result.groundingConfidence === "contradicted" ? "degraded" : "unknown",
+        handler: result.handler,
+        traceId: result.traceId,
+        fallbackUsed: result.fallbackUsed,
+        groundingConfidence: result.groundingConfidence,
+        steps: [],
+        citations: [],
+        contextBlocks: [],
       });
     }
   );
 }
-
-/* ─────────────────────────────────────────────────────────────────
-   LEGACY RAG SYSTEM PROMPT
-   Used when the tool pipeline is off (document-grounded path).
-   ───────────────────────────────────────────────────────────────── */
-
-function buildRagSystemPrompt(
-  ragContexts: { text: string; chunkId: string; sourceUri?: string }[],
-  liveContexts: { source: string; text: string }[],
-  handler: HandlerType
-): string {
-  const hasAny = ragContexts.length > 0 || liveContexts.length > 0;
-
-  const handlerHint = RAG_HANDLER_HINTS[handler] ?? "";
-
-  const persona = `You are Ravi, the RVL Lamination Assistant — calm, experienced, direct. Speak plainly. Lead with the answer. Use exact values from CONTEXT. Never invent data. Never end with hollow closings. Write 2-4 sentences only.${handlerHint ? "\n" + handlerHint : ""}`;
-
-  if (!hasAny) {
-    return `${persona}\n\nCONTEXT:\n(empty — no live data available right now)`;
-  }
-
-  const parts: string[] = [];
-
-  if (liveContexts.length > 0) {
-    const clean = liveContexts.filter(
-      c => !c.text.includes("No definitions matched") && !c.text.includes("No tags found")
-    );
-    parts.push(...(clean.length > 0 ? clean : liveContexts).map(c => c.text));
-  }
-
-  if (ragContexts.length > 0) {
-    parts.push(...ragContexts.map((c, i) => `[#${i + 1}] ${c.text}`));
-  }
-
-  return `${persona}\n\nCONTEXT:\n${parts.join("\n\n")}`;
-}
-
-const RAG_HANDLER_HINTS: Partial<Record<HandlerType, string>> = {
-  alerts: "Focus on the alert situation. Name the most important alert first.",
-  stale_data: "Note that data may be stale. Do not state readings as current fact.",
-  partial_telemetry: "Acknowledge that only partial data is available.",
-  user_correction: "Acknowledge the correction. Re-state the current data clearly.",
-  conflicting_context: "Flag the discrepancy between fault flags and alert records.",
-};
-
-const TOOL_LABEL: Record<string, string> = {
-  find_tags: "Resolved tag candidates (fuzzy)",
-  get_tags: "Fetched live tag values",
-  get_alerts: "Queried alerts",
-  get_reports: "Loaded report runs",
-  get_production_metrics: "Aggregated production metrics",
-};
-
-const LIVE_CONTEXT_LABEL: Record<string, string> = {
-  alerts_db: "Queried alerts",
-  tags_db: "Fetched live tag values",
-  tags_selected: "Loaded selected tags",
-  reports_db: "Loaded report history",
-  ollama_catalog: "Listed available models",
-  production_db: "Aggregated production data",
-};

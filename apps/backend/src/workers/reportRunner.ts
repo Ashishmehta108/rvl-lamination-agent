@@ -11,6 +11,14 @@ import { config } from "../config.js";
 import { Jobs } from "./jobs.js";
 import { chatOnceWithModel } from "../llm/ollama.js";
 import { aggregateProductionMetrics, type ProductionBucket } from "../services/productionMetrics.js";
+import { 
+  getReportPrompt, 
+  REPORT_OVERVIEW_PROMPT_ID, 
+  REPORT_ALERTS_PROMPT_ID, 
+  REPORT_TAGS_PROMPT_ID, 
+  REPORT_PRODUCTION_PROMPT_ID,
+  REPORT_RECOMMENDATIONS_PROMPT_ID 
+} from "../services/promptRegistry.js";
 
 type ReportRunPayload = {
   runId?: string;
@@ -21,33 +29,7 @@ type ReportRunPayload = {
   windowEnd: string;
 };
 
-/* ─── Specialized Prompts for Agentic Steps ─── */
 
-const SECTION_OVERVIEW_PROMPT = `You are an industrial reporting agent. 
-Task: Write a 1-2 paragraph Executive Overview for the machine's performance in this period.
-Style: Professional, concise, no fluff. Use <h3>Executive Overview</h3> as heading.
-Facts provided: Machine ID, window dates, total alert counts.`;
-
-const SECTION_ALERTS_PROMPT = `You are an industrial reporting agent.
-Task: Analyze the ALERTS log provided. Group by severity and summarize any recurring issues.
-Style: Use <h3>Alert Analysis</h3> as heading. Use <ul> and <li>. Mention specific alert titles.
-Facts provided: List of alerts (severity, title, timestamp).`;
-
-const SECTION_TAGS_PROMPT = `You are an industrial reporting agent.
-Task: Analyze the LIVE TAG SNAPSHOT. Highlight 2-3 most critical sensors and their current values.
-Style: Use <h3>Sensor Snapshot Analysis</h3> as heading. Natural prose, no raw lists. 
-Facts provided: Tag slugs, values, and units.`;
-
-const SECTION_RECOMMENDATIONS_PROMPT = `You are an industrial reporting agent.
-Task: Based on the alerts, tag values, and production metrics, provide 3-4 specific maintenance or operational recommendations.
-Style: Use <h3>Operational Recommendations</h3> as heading. Use a numbered list.
-Facts provided: Summary of alerts, latest tags, and production trends.`;
-
-const SECTION_PRODUCTION_PROMPT = `You are an industrial reporting agent.
-Task: Analyze the PRODUCTION METRICS provided. Comment on throughput trends (meters produced), speed consistency (RPM/MPM), and GSM quality stability.
-Style: Use <h3>Production Analysis</h3> as heading. 2-3 paragraphs max. Mention specific numbers.
-Call out any notable increases, decreases, or anomalies. Compare periods where data exists.
-Facts provided: Daily, weekly, and monthly production aggregates.`;
 
 async function buildTagSnapshot(machineId: string) {
   try {
@@ -243,7 +225,7 @@ export async function registerReportRunner(boss: PgBoss, logger: Logger) {
         let step3b = { html: "<p class=\"muted\">No production data available for this period.</p>", ms: 0 };
         if (hasProduction) {
           runLog.info("starting agentic step: production");
-          step3b = await runReportStep("production", SECTION_PRODUCTION_PROMPT, {
+          step3b = await runReportStep("production", getReportPrompt(REPORT_PRODUCTION_PROMPT_ID), {
             daily: productionData.daily.map(b => ({ period: b.label, meters: b.runningMeters, avgRpm: b.avgExtruderRpm, avgMpm: b.avgLaminatorMpm, avgGsm: b.avgGsmEntry })),
             weekly: productionData.weekly.map(b => ({ period: b.label, meters: b.runningMeters, avgRpm: b.avgExtruderRpm, avgMpm: b.avgLaminatorMpm, avgGsm: b.avgGsmEntry })),
             monthly: productionData.monthly.map(b => ({ period: b.label, meters: b.runningMeters, avgRpm: b.avgExtruderRpm, avgMpm: b.avgLaminatorMpm, avgGsm: b.avgGsmEntry })),

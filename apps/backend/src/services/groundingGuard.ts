@@ -75,7 +75,8 @@ function buildEvidenceText(packet: ContextPacket, liveContexts: LiveContext[]): 
 }
 
 function extractNumberTokens(text: string): string[] {
-  return [...text.matchAll(/\b\d+(?:\.\d+)?%?\b/g)].map((m) => m[0]);
+  // Extract numbers and normalize (strip trailing % or units for matching)
+  return [...text.matchAll(/\b(\d+(?:\.\d+)?)(?:\s*%|%)?\b/g)].map((m) => m[1]!);
 }
 
 function collectUnsupportedNumbers(answer: string, evidenceText: string): string[] {
