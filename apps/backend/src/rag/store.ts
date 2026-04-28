@@ -14,6 +14,14 @@ type ChunkRow = {
   createdAt: string;
 };
 
+export interface RagResult {
+  chunkId: string;
+  text: string;
+  sourceUri?: string;
+  /** ISO timestamp of when the chunk was last ingested — for stale-context detection. */
+  retrievedAt: string;
+}
+
 let tablePromise: Promise<any> | null = null;
 
 async function getTable() {
@@ -32,8 +40,8 @@ async function getTable() {
           tagIds: ["__seed__"],
           sourceType: "seed",
           sourceUri: "seed",
-          createdAt: new Date().toISOString()
-        }
+          createdAt: new Date().toISOString(),
+        },
       ]);
     }
     return db.openTable("chunks");
@@ -41,16 +49,22 @@ async function getTable() {
   return tablePromise;
 }
 
-export async function ragQuery(args: { query: string; machineId?: string; tagIds?: string[]; topK: number }) {
+export async function ragQuery(args: {
+  query: string;
+  machineId?: string;
+  tagIds?: string[];
+  topK: number;
+}): Promise<RagResult[]> {
   const table = await getTable();
   const qEmb = await embedText(args.query);
 
   const tagFilter = args.tagIds?.filter(Boolean) ?? [];
   const fetchLimit = tagFilter.length > 0 ? Math.min(200, args.topK * 10) : args.topK;
 
-  // LanceDB query API returns an async builder; keep minimal and tolerant across versions.
   let builder: any = table.search(qEmb).limit(fetchLimit);
-  if (args.machineId) builder = builder.where(`"machineId" = '${args.machineId.replaceAll("'", "''")}'`);
+  if (args.machineId) {
+    builder = builder.where(`"machineId" = '${args.machineId.replaceAll("'", "''")}'`);
+  }
   let rows = (await builder.toArray()) as ChunkRow[];
 
   if (tagFilter.length > 0) {
@@ -58,7 +72,16 @@ export async function ragQuery(args: { query: string; machineId?: string; tagIds
     rows = rows.filter((r) => r.tagIds?.some((t) => want.has(t)));
   }
 
-  rows = rows.slice(0, args.topK);
-  return rows.map((r) => ({ chunkId: r.chunkId, text: r.text, sourceUri: r.sourceUri }));
-}
+  // Cap at topK (max 3) — prevents RAG from crowding out live facts on small models
+  rows = rows.slice(0, Math.min(args.topK, 3));
 
+  const retrievedAt = new Date().toISOString();
+
+  return rows.map((r) => ({
+    chunkId: r.chunkId,
+    // 300-char cap per chunk — reduced from 320 for small-model budget compliance
+    text: r.text.replace(/\s+/g, " ").trim().slice(0, 300),
+    sourceUri: r.sourceUri,
+    retrievedAt,
+  }));
+}

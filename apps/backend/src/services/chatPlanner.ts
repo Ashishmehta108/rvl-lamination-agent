@@ -9,27 +9,92 @@ export const ChatPlannerSchema = z.object({
         args: z.record(z.unknown()).optional()
       })
     )
-    .max(8)
+    .max(4)
 });
 
-export const PLANNER_SYSTEM = `You are a planner for an industrial lamination assistant. Output ONLY valid JSON (no markdown fences, no prose).
+/**
+ * Compact planner prompt targeting < 300 tokens.
+ * Explanatory prose removed — schema + rules only.
+ */
+export const PLANNER_SYSTEM = `Planner for industrial lamination assistant. Output ONLY valid JSON. No markdown fences.
 
-Schema:
-{"tools":[{"name":"<tool>","args":{...}}, ...]}
+Schema: {"tools":[{"name":"<tool>","args":{...}},...]}
 
-Allowed tools and args:
-- find_tags: { "query": "<user phrase or tag name fragment>" }
-- get_tags: { "tagIds"?: ["<mongo tagId>", ...], "limit"?: number }  // omit tagIds for latest snapshot
-- get_alerts: { "includeRecentClosed"?: boolean }  // default true
-- get_reports: { "limit"?: number }
-- get_production_metrics: { "granularity"?: "daily"|"weekly"|"monthly", "buckets"?: number }
+Tools:
+- find_tags: {"query":"<phrase>"}
+- get_tags: {"tagIds":["<id>"],"limit":number}
+- get_alerts: {"includeRecentClosed":boolean}
+- get_reports: {"limit":number}
+- get_production_metrics: {"granularity":"daily"|"weekly"|"monthly","buckets":number}
 
 Rules:
-- If the user asks about alerts, include get_alerts.
-- If they ask about a specific sensor/tag by name, include find_tags with their wording then get_tags with the returned tagIds (you may omit get_tags if you only find_tags — the server will still run get_tags if needed).
-- If they ask about reports/history, include get_reports.
-- If they ask about production rollups/trends, include get_production_metrics.
-- Keep the plan minimal (usually 2–5 tools).`;
+- alerts query → get_alerts
+- sensor/tag by name → find_tags then get_tags
+- reports → get_reports
+- production rollup → get_production_metrics
+- max 4 tools; prefer smallest useful plan
+- vague query → 1-2 tools only`;
+
+/**
+ * Tries to extract a valid JSON object from partial or fence-wrapped LLM output.
+ * Called before JSON.parse so small model formatting glitches don't silently fail.
+ */
+export function repairPlannerJson(raw: string): string | null {
+  // Remove markdown fences first
+  let t = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+
+  // If it parses cleanly, return as-is
+  try {
+    JSON.parse(t);
+    return t;
+  } catch { /* fall through to repair */ }
+
+  // Try to extract the first {...} block
+  const match = /\{[\s\S]*\}/.exec(t);
+  if (!match) return null;
+
+  try {
+    JSON.parse(match[0]);
+    return match[0];
+  } catch {
+    return null;
+  }
+}
+
+export function stripJsonFence(s: string): string {
+  let t = s.trim();
+  t = t.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+  return t.trim();
+}
+
+/**
+ * Validates a parsed plan:
+ * - max 4 tools
+ * - no unknown tool names
+ * Returns true if valid, false if should fall back to defaultToolPlan.
+ */
+export function validatePlan(plan: z.infer<typeof ChatPlannerSchema>): boolean {
+  if (!plan?.tools || plan.tools.length === 0) return false;
+  if (plan.tools.length > 4) return false;
+  const allowed = new Set(["find_tags", "get_tags", "get_alerts", "get_reports", "get_production_metrics"]);
+  return plan.tools.every((t) => allowed.has(t.name));
+}
+
+export function parsePlannerJson(raw: string): z.infer<typeof ChatPlannerSchema> | null {
+  // Try repair first — handles partial JSON and markdown-wrapped output
+  const repaired = repairPlannerJson(raw);
+  if (!repaired) return null;
+
+  try {
+    const parsed = JSON.parse(repaired);
+    const r = ChatPlannerSchema.safeParse(parsed);
+    if (!r.success) return null;
+    if (!validatePlan(r.data)) return null;
+    return r.data;
+  } catch {
+    return null;
+  }
+}
 
 export function wantsToolPipeline(userText: string, clientTagIds?: string[]): boolean {
   if (clientTagIds && clientTagIds.length > 0) return true;
@@ -52,23 +117,6 @@ function isGreetingOnly(q: string): boolean {
   return /^(hi|hello|hey|thanks|thank you|good morning|good afternoon|good evening)\b[!?.]*$/i.test(t);
 }
 
-export function stripJsonFence(s: string): string {
-  let t = s.trim();
-  t = t.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
-  return t.trim();
-}
-
-export function parsePlannerJson(raw: string): z.infer<typeof ChatPlannerSchema> | null {
-  const t = stripJsonFence(raw);
-  try {
-    const parsed = JSON.parse(t);
-    const r = ChatPlannerSchema.safeParse(parsed);
-    return r.success ? r.data : null;
-  } catch {
-    return null;
-  }
-}
-
 /** Heuristic fallback if the model returns invalid JSON. */
 export function defaultToolPlan(userQuery: string, clientTagIds?: string[]): ChatToolCall[] {
   const q = userQuery.toLowerCase();
@@ -78,7 +126,11 @@ export function defaultToolPlan(userQuery: string, clientTagIds?: string[]): Cha
     tools.push({ name: "get_tags", args: { tagIds: clientTagIds.slice(0, 24) } });
   }
 
-  if (/\b(find|which|what|show)\b.*\b(tag|sensor)\b|\b(tag|sensor)\b.*\b(winder|extruder|rpm|tension|gsm|meter|speed)\b/i.test(userQuery)) {
+  if (
+    /\b(find|which|what|show)\b.*\b(tag|sensor)\b|\b(tag|sensor)\b.*\b(winder|extruder|rpm|tension|gsm|meter|speed)\b/i.test(
+      userQuery
+    )
+  ) {
     tools.push({ name: "find_tags", args: { query: userQuery.slice(0, 200) } });
   }
 
@@ -98,5 +150,5 @@ export function defaultToolPlan(userQuery: string, clientTagIds?: string[]): Cha
     tools.push({ name: "get_tags", args: { limit: 28 } });
   }
 
-  return tools.slice(0, 8);
+  return tools.slice(0, 4);
 }
