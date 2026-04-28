@@ -10,6 +10,7 @@ import { getMongoClient } from "@rvl/db-mongo";
 import { config } from "../config.js";
 import { Jobs } from "./jobs.js";
 import { chatOnceWithModel } from "../llm/ollama.js";
+import { aggregateProductionMetrics, type ProductionBucket } from "../services/productionMetrics.js";
 
 type ReportRunPayload = {
   runId?: string;
@@ -38,9 +39,15 @@ Style: Use <h3>Sensor Snapshot Analysis</h3> as heading. Natural prose, no raw l
 Facts provided: Tag slugs, values, and units.`;
 
 const SECTION_RECOMMENDATIONS_PROMPT = `You are an industrial reporting agent.
-Task: Based on the alerts and tag values, provide 3-4 specific maintenance or operational recommendations.
+Task: Based on the alerts, tag values, and production metrics, provide 3-4 specific maintenance or operational recommendations.
 Style: Use <h3>Operational Recommendations</h3> as heading. Use a numbered list.
-Facts provided: Summary of alerts and latest tags.`;
+Facts provided: Summary of alerts, latest tags, and production trends.`;
+
+const SECTION_PRODUCTION_PROMPT = `You are an industrial reporting agent.
+Task: Analyze the PRODUCTION METRICS provided. Comment on throughput trends (meters produced), speed consistency (RPM/MPM), and GSM quality stability.
+Style: Use <h3>Production Analysis</h3> as heading. 2-3 paragraphs max. Mention specific numbers.
+Call out any notable increases, decreases, or anomalies. Compare periods where data exists.
+Facts provided: Daily, weekly, and monthly production aggregates.`;
 
 async function buildTagSnapshot(machineId: string) {
   try {
@@ -99,6 +106,65 @@ async function runReportStep(stepName: string, systemPrompt: string, facts: any,
     logger.warn({ stepName, err: String(err) }, "report_step_failed");
     return { html: `<p class="muted">Section unavailable (${stepName})</p>`, ms: Date.now() - t0 };
   }
+}
+
+async function fetchProductionData(machineId: string, logger: Logger): Promise<{
+  daily: ProductionBucket[];
+  weekly: ProductionBucket[];
+  monthly: ProductionBucket[];
+}> {
+  try {
+    const [daily, weekly, monthly] = await Promise.all([
+      aggregateProductionMetrics({ machineId, granularity: "daily", buckets: 7 }),
+      aggregateProductionMetrics({ machineId, granularity: "weekly", buckets: 4 }),
+      aggregateProductionMetrics({ machineId, granularity: "monthly", buckets: 3 }),
+    ]);
+    return { daily: daily.buckets, weekly: weekly.buckets, monthly: monthly.buckets };
+  } catch (err) {
+    logger.warn({ err: String(err) }, "production_data_fetch_failed");
+    return { daily: [], weekly: [], monthly: [] };
+  }
+}
+
+function buildProductionHtmlTable(label: string, buckets: ProductionBucket[]): string {
+  if (buckets.length === 0) return `<p class="muted">No ${label.toLowerCase()} data available.</p>`;
+  const fmt = (n: number | null) => (n == null ? "—" : n.toLocaleString());
+  const delta = (cur: number | null, prev: number | null): string => {
+    if (cur == null || prev == null || prev === 0) return "";
+    const pct = Math.round(((cur - prev) / prev) * 100);
+    if (pct === 0) return "";
+    const color = pct > 0 ? "#16a34a" : "#dc2626";
+    const arrow = pct > 0 ? "↑" : "↓";
+    return ` <span style="color:${color};font-size:10px;font-weight:600">${arrow}${Math.abs(pct)}%</span>`;
+  };
+  const totalMeters = buckets.reduce((s, b) => s + (b.runningMeters ?? 0), 0);
+  const rows = buckets.map((b, i) => {
+    const prev = i < buckets.length - 1 ? buckets[i + 1] : null;
+    return `<tr>
+      <td style="padding:8px 14px;border-bottom:1px solid #f0eee9;font-size:12px;font-weight:500">${esc(b.label)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #f0eee9;text-align:right;font-size:12px">${fmt(b.runningMeters)}${delta(b.runningMeters, prev?.runningMeters ?? null)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #f0eee9;text-align:right;font-size:12px">${fmt(b.avgExtruderRpm)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #f0eee9;text-align:right;font-size:12px">${fmt(b.avgLaminatorMpm)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #f0eee9;text-align:right;font-size:12px">${fmt(b.avgGsmEntry)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #f0eee9;text-align:right;font-size:11px;color:#a5a29d">${b.sampleCount}</td>
+    </tr>`;
+  }).join("");
+
+  return `
+    <h4 style="font-size:11px;font-weight:700;margin:20px 0 8px;color:#6b6964;text-transform:uppercase;letter-spacing:0.05em">${esc(label)} <span style="font-weight:400;color:#a5a29d">(Total: ${Math.round(totalMeters).toLocaleString()} m)</span></h4>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr>
+          <th style="text-align:left;padding:8px 14px;background:#f1efeb;color:#6b6964;font-size:10px;font-weight:600;text-transform:uppercase">Period</th>
+          <th style="text-align:right;padding:8px 10px;background:#f1efeb;color:#6b6964;font-size:10px;font-weight:600;text-transform:uppercase">Meters</th>
+          <th style="text-align:right;padding:8px 10px;background:#f1efeb;color:#6b6964;font-size:10px;font-weight:600;text-transform:uppercase">Avg RPM</th>
+          <th style="text-align:right;padding:8px 10px;background:#f1efeb;color:#6b6964;font-size:10px;font-weight:600;text-transform:uppercase">Avg m/min</th>
+          <th style="text-align:right;padding:8px 10px;background:#f1efeb;color:#6b6964;font-size:10px;font-weight:600;text-transform:uppercase">Avg GSM</th>
+          <th style="text-align:right;padding:8px 10px;background:#f1efeb;color:#6b6964;font-size:10px;font-weight:600;text-transform:uppercase">Samples</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 export async function registerReportRunner(boss: PgBoss, logger: Logger) {
@@ -169,10 +235,38 @@ export async function registerReportRunner(boss: PgBoss, logger: Logger) {
         }, runLog);
         stepTimings.tags = step3.ms;
 
+        // Production metrics step
+        runLog.info("fetching production metrics");
+        const productionData = await fetchProductionData(payload.machineId, runLog);
+        const hasProduction = productionData.daily.length > 0 || productionData.weekly.length > 0 || productionData.monthly.length > 0;
+
+        let step3b = { html: "<p class=\"muted\">No production data available for this period.</p>", ms: 0 };
+        if (hasProduction) {
+          runLog.info("starting agentic step: production");
+          step3b = await runReportStep("production", SECTION_PRODUCTION_PROMPT, {
+            daily: productionData.daily.map(b => ({ period: b.label, meters: b.runningMeters, avgRpm: b.avgExtruderRpm, avgMpm: b.avgLaminatorMpm, avgGsm: b.avgGsmEntry })),
+            weekly: productionData.weekly.map(b => ({ period: b.label, meters: b.runningMeters, avgRpm: b.avgExtruderRpm, avgMpm: b.avgLaminatorMpm, avgGsm: b.avgGsmEntry })),
+            monthly: productionData.monthly.map(b => ({ period: b.label, meters: b.runningMeters, avgRpm: b.avgExtruderRpm, avgMpm: b.avgLaminatorMpm, avgGsm: b.avgGsmEntry })),
+          }, runLog);
+          stepTimings.production = step3b.ms;
+        }
+
+        // Build deterministic production tables
+        const productionTablesHtml = hasProduction
+          ? [
+              buildProductionHtmlTable("Daily (Last 7 Days)", productionData.daily),
+              buildProductionHtmlTable("Weekly (Last 4 Weeks)", productionData.weekly),
+              buildProductionHtmlTable("Monthly (Last 3 Months)", productionData.monthly),
+            ].join("")
+          : "";
+
         runLog.info("starting agentic step: recommendations");
         const step4 = await runReportStep("recommendations", SECTION_RECOMMENDATIONS_PROMPT, {
           alertSummary: `${alerts.length} alerts found`,
-          criticalTags: tagSnapshot.slice(0, 5)
+          criticalTags: tagSnapshot.slice(0, 5),
+          productionSummary: hasProduction
+            ? `Daily meters: ${productionData.daily.map(b => b.runningMeters ?? 0).join(", ")}. Weekly: ${productionData.weekly.map(b => b.runningMeters ?? 0).join(", ")}.`
+            : "No production data available."
         }, runLog);
         stepTimings.recommendations = step4.ms;
 
@@ -180,6 +274,10 @@ export async function registerReportRunner(boss: PgBoss, logger: Logger) {
           <div class="report-card">${step1.html}</div>
           <div class="report-card">${step2.html}</div>
           <div class="report-card">${step3.html}</div>
+          <div class="report-card">
+            ${step3b.html}
+            ${productionTablesHtml}
+          </div>
           <div class="report-card">${step4.html}</div>
         `;
 

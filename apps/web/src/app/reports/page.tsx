@@ -52,14 +52,15 @@ export default function ReportsListPage() {
 
         <div className="rvl-card" style={{ padding: 0, overflow: "hidden" }}>
           <div className="rvl-table-responsive">
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 600 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 700 }}>
               <thead>
                 <tr style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border-subtle)" }}>
                   <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 600, color: "var(--text-muted)" }}>Created</th>
                   <th style={{ textAlign: "left", padding: "10px 8px", fontWeight: 600, color: "var(--text-muted)" }}>Window</th>
                   <th style={{ textAlign: "left", padding: "10px 8px", fontWeight: 600, color: "var(--text-muted)" }}>Status</th>
                   <th style={{ textAlign: "right", padding: "10px 8px", fontWeight: 600, color: "var(--text-muted)" }}>Alerts</th>
-                  <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 600, color: "var(--text-muted)" }}>Email</th>
+                  <th style={{ textAlign: "right", padding: "10px 8px", fontWeight: 600, color: "var(--text-muted)" }}>Tags</th>
+                  <th style={{ textAlign: "left", padding: "10px 8px", fontWeight: 600, color: "var(--text-muted)" }}>Email</th>
                   <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 600, color: "var(--text-muted)" }}></th>
                 </tr>
               </thead>
@@ -78,21 +79,24 @@ export default function ReportsListPage() {
                           fontSize: 10,
                           padding: "2px 8px",
                           borderRadius: 4,
-                          background: "var(--surface-2)",
-                          border: "1px solid var(--border)",
+                          background: r.status === "succeeded" ? "rgba(34,197,94,0.12)" : "var(--surface-2)",
+                          color: r.status === "succeeded" ? "#16a34a" : "var(--text)",
+                          border: `1px solid ${r.status === "succeeded" ? "rgba(34,197,94,0.2)" : "var(--border)"}`,
+                          fontWeight: 600,
                         }}
                       >
                         {r.status}
                       </span>
                     </td>
-                    <td style={{ padding: "10px 8px", textAlign: "right" }}>{r.metrics?.alerts ?? "—"}</td>
-                    <td style={{ padding: "10px 14px", fontSize: 11 }}>{emailCell(r.metrics)}</td>
+                    <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 500 }}>{r.metrics?.totalAlerts ?? r.metrics?.alerts ?? "—"}</td>
+                    <td style={{ padding: "10px 8px", textAlign: "right", color: "var(--text-muted)" }}>{r.metrics?.tagCount ?? "—"}</td>
+                    <td style={{ padding: "10px 8px", fontSize: 11 }}>{emailCell(r.metrics)}</td>
                     <td style={{ padding: "10px 14px", textAlign: "right" }}>
                       <Link
                         href={`/reports/${encodeURIComponent(r.id)}?machineId=${encodeURIComponent(machineId)}`}
                         style={{ color: "var(--accent)", fontWeight: 500, textDecoration: "none" }}
                       >
-                        Open
+                        Open →
                       </Link>
                     </td>
                   </tr>

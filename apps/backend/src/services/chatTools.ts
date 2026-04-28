@@ -104,9 +104,46 @@ export async function toolGetTags(machineId: string, args: { tagIds?: string[]; 
   return formatTagLines(machineId, rows as any[], defMap);
 }
 
-export async function toolGetAlerts(machineId: string, args: { includeRecentClosed?: boolean }): Promise<string> {
-  const includeRecent = args.includeRecentClosed !== false;
+export async function toolGetAlerts(
+  machineId: string,
+  args: { includeRecentClosed?: boolean; from?: string; to?: string }
+): Promise<string> {
   const db = getPgDb();
+
+  // Date-range mode: query alerts within a specific window
+  const hasDateRange = args.from && !Number.isNaN(Date.parse(args.from));
+  if (hasDateRange) {
+    const rangeStart = new Date(args.from!);
+    const rangeEnd = args.to && !Number.isNaN(Date.parse(args.to))
+      ? new Date(args.to)
+      : new Date(rangeStart.getTime() + 24 * 60 * 60 * 1000); // default: +24h
+
+    const rows = await db
+      .select()
+      .from(schema.alertEvents)
+      .where(
+        and(
+          eq(schema.alertEvents.machineId, machineId),
+          gte(schema.alertEvents.startsAt, rangeStart),
+          lte(schema.alertEvents.startsAt, rangeEnd)
+        )
+      )
+      .orderBy(desc(schema.alertEvents.startsAt))
+      .limit(50);
+
+    const label = rangeStart.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "long", year: "numeric" });
+    if (rows.length === 0) {
+      return `ALERTS (${label}): No alerts recorded for machine "${machineId}" on this date.`;
+    }
+    const lines = rows.map(
+      (a, i) =>
+        `ALERT #${i + 1}: [${String(a.severity).toUpperCase()}] status: ${a.status} | title: "${a.title}" | detected at: ${a.startsAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}${a.description ? ` | description: ${a.description.slice(0, 120)}` : ""}`
+    );
+    return `ALERTS ON ${label.toUpperCase()} (${rows.length} total):\n${lines.join("\n")}`;
+  }
+
+  // Default mode: open alerts + recent closed
+  const includeRecent = args.includeRecentClosed !== false;
   const openRows = await db
     .select()
     .from(schema.alertEvents)
@@ -134,16 +171,10 @@ export async function toolGetAlerts(machineId: string, args: { includeRecentClos
   const seen = new Set<string>();
   const merged: typeof openRows = [];
   for (const r of openRows) {
-    if (!seen.has(r.id)) {
-      seen.add(r.id);
-      merged.push(r);
-    }
+    if (!seen.has(r.id)) { seen.add(r.id); merged.push(r); }
   }
   for (const r of recentClosed) {
-    if (!seen.has(r.id)) {
-      seen.add(r.id);
-      merged.push(r);
-    }
+    if (!seen.has(r.id)) { seen.add(r.id); merged.push(r); }
   }
 
   if (merged.length === 0) {
@@ -154,7 +185,7 @@ export async function toolGetAlerts(machineId: string, args: { includeRecentClos
     (a, i) =>
       `ALERT #${i + 1}: [${String(a.severity).toUpperCase()}] status: ${a.status} | title: "${a.title}" | detected at: ${a.startsAt.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}${a.description ? ` | description: ${a.description.slice(0, 120)}` : ""}`
   );
-  return `ACTIVE ALERTS:\n${lines.join("\n")}`;
+  return `ACTIVE ALERTS (${merged.length} total):\n${lines.join("\n")}`;
 }
 
 export async function toolGetReports(machineId: string, args: { limit?: number }): Promise<string> {
@@ -184,17 +215,33 @@ export async function toolGetReports(machineId: string, args: { limit?: number }
 
 export async function toolGetProductionMetrics(
   machineId: string,
-  args: { granularity?: string; buckets?: number }
+  args: { granularity?: string; buckets?: number; from?: string; to?: string }
 ): Promise<string> {
   const g = String(args.granularity ?? "daily").toLowerCase();
   const granularity = (g === "weekly" || g === "monthly" ? g : "daily") as ProductionGranularity;
   const buckets = Math.min(90, Math.max(1, Number(args.buckets ?? 14) || 14));
-  const r = await aggregateProductionMetrics({ machineId, granularity, buckets });
-  const lines = r.buckets.map(
-    (b) =>
-      `- ${b.label}: runningMeters=${b.runningMeters ?? "n/a"} avgRpm=${b.avgExtruderRpm ?? "n/a"} avgMpm=${b.avgLaminatorMpm ?? "n/a"} avgGsm=${b.avgGsmEntry ?? "n/a"} samples=${b.sampleCount}`
-  );
-  return `PRODUCTION METRICS (${granularity}, ${r.buckets.length} buckets, ${r.from} → ${r.to}):\n${lines.join("\n")}`;
+  const r = await aggregateProductionMetrics({
+    machineId,
+    granularity,
+    buckets,
+    fromISO: args.from ?? null,
+    toISO: args.to ?? null,
+  });
+  if (r.buckets.length === 0) {
+    return `PRODUCTION METRICS (${granularity}): No production data available for "${machineId}" in the requested window.`;
+  }
+  const lines = r.buckets.map((b, i) => {
+    const prev = i < r.buckets.length - 1 ? r.buckets[i + 1] : null;
+    let mDelta = "";
+    if (b.runningMeters != null && prev?.runningMeters != null && prev.runningMeters > 0) {
+      const pct = Math.round(((b.runningMeters - prev.runningMeters) / prev.runningMeters) * 100);
+      mDelta = pct === 0 ? " (flat)" : pct > 0 ? ` (+${pct}%)` : ` (${pct}%)`;
+    }
+    return `- ${b.label}: meters=${b.runningMeters ?? "n/a"}${mDelta} avgRpm=${b.avgExtruderRpm ?? "n/a"} avgMpm=${b.avgLaminatorMpm ?? "n/a"} avgGsm=${b.avgGsmEntry ?? "n/a"} samples=${b.sampleCount}`;
+  });
+  const totalMeters = r.buckets.reduce((sum, b) => sum + (b.runningMeters ?? 0), 0);
+  const header = `PRODUCTION METRICS (${granularity}, ${r.buckets.length} periods, ${r.from} → ${r.to}, totalMeters=${Math.round(totalMeters)}):`;
+  return `${header}\n${lines.join("\n")}`;
 }
 
 export type ChatToolName = "find_tags" | "get_tags" | "get_alerts" | "get_reports" | "get_production_metrics";
@@ -229,7 +276,11 @@ export async function executeChatTool(machineId: string, call: ChatToolCall): Pr
       return { name: call.name, text };
     }
     case "get_alerts": {
-      const text = await toolGetAlerts(machineId, { includeRecentClosed: (args as any).includeRecentClosed !== false });
+      const text = await toolGetAlerts(machineId, {
+        includeRecentClosed: (args as any).includeRecentClosed !== false,
+        from: (args as any).from ? String((args as any).from) : undefined,
+        to: (args as any).to ? String((args as any).to) : undefined,
+      });
       return { name: call.name, text };
     }
     case "get_reports": {
@@ -239,7 +290,9 @@ export async function executeChatTool(machineId: string, call: ChatToolCall): Pr
     case "get_production_metrics": {
       const text = await toolGetProductionMetrics(machineId, {
         granularity: String((args as any).granularity ?? "daily"),
-        buckets: Number((args as any).buckets)
+        buckets: Number((args as any).buckets),
+        from: (args as any).from ? String((args as any).from) : undefined,
+        to: (args as any).to ? String((args as any).to) : undefined,
       });
       return { name: call.name, text };
     }

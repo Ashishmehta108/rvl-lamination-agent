@@ -684,7 +684,7 @@ interface ParsedProductionBucket {
     const alerts = parseAlerts(liveContexts);
   const production = parseProduction(liveContexts);
   
-  const preRendered = buildPreRendered(tags, alerts, production, ctx, handler.handler, intent);
+  const preRendered = buildPreRendered(tags, alerts, production, ctx, handler.handler, intent, liveContexts);
   const brief = buildBrief(handler.handler, tags, alerts, production, ctx, health, input, intent);
     const constraints = buildConstraints(handler.handler, intent, ctx);
     const fallback = buildFallback(handler.handler, ctx, health);
@@ -776,7 +776,7 @@ interface ParsedProductionBucket {
     const result: ParsedAlert[] = [];
     for (const line of block.text.split("\n")) {
       const m = line.match(
-        /ALERT\s*#\d+:\s*\[(\w+)\]\s*status:\s*(\w+)\s*\|\s*title:\s*"([^"]+)"\s*\|\s*detected at:\s*([^|]+)(?:\|\s*description:\s*(.+))?/i
+        /ALERT\s*#\d+:\s*\[(\w+)\]\s*status:\s*(\w+)\s*\|\s*title:\s*"([^"]+)"\s*\|\s*detected at:\s*([^|]+?)\s*(?:\|\s*description:\s*(.+))?$/i
       );
       if (!m) continue;
       result.push({
@@ -799,8 +799,10 @@ function parseProduction(liveContexts: { source: string; text: string }[]): Pars
   if (!block || !block.text) return [];
   const result: ParsedProductionBucket[] = [];
   for (const line of block.text.split("\n")) {
+    // Match both old format (runningMeters=) and new format (meters=)
+    // Optional delta like (+5%) or (flat) can follow the meter value
     const m = line.match(
-      /^-\s+([^:]+):\s+runningMeters=([^\s]+)\s+avgRpm=([^\s]+)\s+avgMpm=([^\s]+)\s+avgGsm=([^\s]+)\s+samples=([^\s]+)\s*$/i
+      /^-\s+([^:]+):\s+(?:running)?[Mm]eters=([^\s]+)(?:\s+\([^)]+\))?\s+avgRpm=([^\s]+)\s+avgMpm=([^\s]+)\s+avgGsm=([^\s]+)\s+samples=([^\s]+)\s*$/i
     );
     if (!m) continue;
     const toNum = (v: string): number | null => {
@@ -840,10 +842,11 @@ function capitalize(s: string): string {
   function buildPreRendered(
     tags: ParsedTag[],
     alerts: ParsedAlert[],
-  production: ParsedProductionBucket[],
+    production: ParsedProductionBucket[],
     ctx: ContextAssessment,
-  handler: HandlerType,
-  intent: IntentSignals
+    handler: HandlerType,
+    intent: IntentSignals,
+    liveContexts: { source: string; text: string }[]
   ): ContextPacket["preRendered"] {
   
     // Intro line (fully deterministic)
@@ -852,33 +855,51 @@ function capitalize(s: string): string {
     // Alerts block
     let alertsBlock: string | null = null;
     if (alerts.length > 0 && (handler === "alerts" || handler === "status" || handler === "conflicting_context")) {
+      // Extract date label from alert source text if available
+      const alertSrc = liveContexts.find(c => c.source === "alerts_db");
+      let alertTitle = "**Active Alerts**";
+      if (alertSrc) {
+        const dateLabel = alertSrc.text.match(/ALERTS ON ([^\n(]+)/i);
+        if (dateLabel) {
+          alertTitle = `**Alerts \u2014 ${dateLabel[1]!.trim()}**`;
+        }
+      }
       const rows = alerts.slice(0, 8).map(a => {
-        const emoji = SEVERITY_EMOJI[a.severity] ?? "ℹ️";
-        const desc = a.description ? a.description.slice(0, 120).replace(/\|/g, "\\|") : "";
-        return `| ${emoji} ${capitalize(a.severity)} | ${capitalize(a.status)} | ${a.title.replace(/\|/g, "\\|")} | ${a.detectedAt.replace(/\|/g, "\\|")} | ${desc} |`;
+        const emoji = SEVERITY_EMOJI[a.severity] ?? "\u2139\uFE0F";
+        const desc = a.description ? a.description.slice(0, 100).replace(/\|/g, "\\|") : "";
+        return `| ${emoji} ${capitalize(a.severity)} | ${capitalize(a.status)} | ${a.title.replace(/\|/g, "\\|")} | ${a.detectedAt.replace(/\|/g, "\\|")} |${desc ? ` ${desc} |` : " |"}`;
       });
       alertsBlock = [
-        "**Alerts Today**",
-        "| Severity | Status | Title | Detected At | Description |",
+        `${alertTitle} (${alerts.length})`,
+        "| Severity | Status | Title | Detected | Details |",
         "|---|---|---|---|---|",
         ...rows,
       ].join("\n");
     }
 
-  // Production block
+
+
+  // Production block — multi-bucket table with deltas
   let productionBlock: string | null = null;
   if (production.length > 0 && (handler === "status" || handler === "multi_intent" || intent.wantsProduction)) {
-    const top = production[0]!;
-    const fmt = (n: number | null) => (n == null ? "n/a" : String(n));
-    const lines = [
-      `• **Period:** ${top.label}`,
-      `• **Running meters:** ${fmt(top.runningMeters)}`,
-      `• **Avg RPM:** ${fmt(top.avgRpm)}`,
-      `• **Avg m/min:** ${fmt(top.avgMpm)}`,
-      `• **Avg GSM:** ${fmt(top.avgGsm)}`,
-      `• **Samples:** ${fmt(top.samples)}`,
-    ];
-    productionBlock = `**Production Today**\n${lines.join("\n")}`;
+    const fmt = (n: number | null) => (n == null ? "—" : n.toLocaleString());
+    const delta = (cur: number | null, prev: number | null): string => {
+      if (cur == null || prev == null || prev === 0) return "";
+      const pct = Math.round(((cur - prev) / prev) * 100);
+      if (pct === 0) return " →";
+      return pct > 0 ? ` ↑${pct}%` : ` ↓${Math.abs(pct)}%`;
+    };
+    const rows = production.slice(0, 14).map((b, i) => {
+      const prev = i < production.length - 1 ? production[i + 1] : null;
+      const mDelta = delta(b.runningMeters, prev?.runningMeters ?? null);
+      return `| ${b.label} | ${fmt(b.runningMeters)}${mDelta} | ${fmt(b.avgRpm)} | ${fmt(b.avgMpm)} | ${fmt(b.avgGsm)} |`;
+    });
+    productionBlock = [
+      `**Production Summary**`,
+      `| Period | Meters Produced | Avg RPM | Avg m/min | Avg GSM |`,
+      `|---|---|---|---|---|`,
+      ...rows,
+    ].join("\n");
   }
   
     // Watch block
@@ -896,7 +917,7 @@ function capitalize(s: string): string {
       ].join("\n");
     }
   
-    // Readings block (grouped)
+    // Readings block (grouped into compact tables)
     let readingsBlock: string | null = null;
     if (tags.length > 0 && (handler === "tags" || handler === "status")) {
       const groups = new Map<string, ParsedTag[]>();
@@ -909,12 +930,17 @@ function capitalize(s: string): string {
       for (const grp of GROUP_ORDER) {
         const grpTags = groups.get(grp);
         if (!grpTags || grpTags.length === 0) continue;
-        const lines = grpTags.slice(0, 8).map(t => {
+        const rows = grpTags.slice(0, 8).map(t => {
           const suffix = FLAG_SUFFIX[t.flag ?? "normal"] ?? "";
-          const time = t.time ? ` (${t.time})` : "";
-          return `• **${t.label}:** ${t.value}${t.unit ? " " + t.unit : ""}${time}${suffix}`;
+          const valCol = `${t.value}${t.unit ? " " + t.unit : ""}${suffix}`;
+          return `| ${t.label} | ${valCol} | ${t.time || "—"} |`;
         });
-        sections.push(`**${grp}**\n${lines.join("\n")}`);
+        sections.push([
+          `**${grp}**`,
+          `| Parameter | Value | Time |`,
+          `|---|---|---|`,
+          ...rows,
+        ].join("\n"));
       }
       if (sections.length > 0) readingsBlock = sections.join("\n\n");
     }
@@ -936,8 +962,8 @@ function capitalize(s: string): string {
   tags: ParsedTag[],
   production: ParsedProductionBucket[]
   ): string {
-    const critCount = alerts.filter(a => a.severity === "critical" && a.status === "open").length;
-    const warnCount = alerts.filter(a => a.severity === "warning" && a.status === "open").length;
+    const critCount = alerts.filter(a => a.severity.toLowerCase() === "critical" && a.status.toLowerCase() === "open").length;
+    const warnCount = alerts.filter(a => a.severity.toLowerCase() === "warning" && a.status.toLowerCase() === "open").length;
     const faultCount = ctx.faultSlugs.length;
   
     if (critCount > 0) return `There ${critCount === 1 ? "is" : "are"} ${critCount} critical alert${critCount > 1 ? "s" : ""} that need attention now.`;
@@ -969,11 +995,11 @@ function capitalize(s: string): string {
     parts.push(`MACHINE HEALTH: ${health.toUpperCase()}`);
   
     if (alerts.length > 0) {
-      const crit = alerts.filter(a => a.severity === "critical").length;
-      const warn = alerts.filter(a => a.severity === "warning").length;
-      parts.push(`ALERTS: ${crit} critical, ${warn} warning`);
-      alerts.slice(0, 3).forEach(a =>
-        parts.push(`  [${a.severity.toUpperCase()}] ${a.title} — ${a.status}`)
+      const crit = alerts.filter(a => a.severity.toLowerCase() === "critical").length;
+      const warn = alerts.filter(a => a.severity.toLowerCase() === "warning").length;
+      parts.push(`ALERTS SUMMARY: ${crit} critical, ${warn} warning, ${alerts.length} total detected`);
+      alerts.slice(0, 5).forEach(a =>
+        parts.push(`  - [${a.severity.toUpperCase()}] ${a.title} (${a.status}) at ${a.detectedAt}`)
       );
     } else {
       parts.push("ALERTS: none");
@@ -1355,11 +1381,11 @@ function capitalize(s: string): string {
   
     if (preRendered.alertsBlock) sections.push(preRendered.alertsBlock);
 
-  if (preRendered.productionBlock) sections.push(preRendered.productionBlock);
-  
-  if (preRendered.watchBlock && handler.handler !== "alerts") {
+    if (preRendered.watchBlock && handler.handler !== "alerts") {
       sections.push(`**Worth watching:**\n${preRendered.watchBlock}`);
     }
+
+    if (preRendered.productionBlock) sections.push(preRendered.productionBlock);
   
     if (preRendered.readingsBlock) sections.push(preRendered.readingsBlock);
   
