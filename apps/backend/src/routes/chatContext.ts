@@ -8,7 +8,8 @@ import { getCachedOllamaModelNames } from "../llm/ollama.js";
    Instead of function-calling (too complex for 1B models), we
    detect intent from the user's message via keywords, then fetch
    relevant live data and format it as plain text for the LLM.
-   ──────────────────────────────────────────────────────────────── */
+──────────────────────────────────────────────────────────────
+*/
 
 type LiveContext = { source: string; text: string };
 
@@ -18,6 +19,8 @@ export type LiveContextOptions = {
 
 /** Keywords that trigger each data source */
 const ALERT_KEYWORDS = ["alert", "alerts", "fired", "warning", "critical", "open", "resolved", "acknowledged", "severity"];
+
+
 const TAG_KEYWORDS = [
   "tag",
   "tags",
@@ -32,7 +35,11 @@ const TAG_KEYWORDS = [
   "temperature",
   "speed"
 ];
+
+
 const REPORT_KEYWORDS = ["report", "reports", "run", "runs", "performance", "summary", "metrics", "last report"];
+
+
 const STATUS_KEYWORDS = [
   "dashboard",
   "overview",
@@ -43,12 +50,12 @@ const STATUS_KEYWORDS = [
   "how is",
   "current state",
   "right now"
-];
+];            
 
 function matchesAny(text: string, keywords: string[]): boolean {
   const lower = text.toLowerCase();
   return keywords.some((k) => lower.includes(k));
-}
+}              
 
 async function fetchOllamaCatalogContext(): Promise<LiveContext | null> {
   const names = await getCachedOllamaModelNames();
@@ -62,8 +69,8 @@ async function fetchOllamaCatalogContext(): Promise<LiveContext | null> {
     source: "ollama_catalog",
     text: `OLLAMA (local inference server): installed model names (for configuration questions only, not machine readings):\n${names.map((n) => `- ${n}`).join("\n")}`
   };
-}
-
+}          
+ 
 export async function fetchLiveContext(
   query: string,
   machineId: string,
@@ -114,7 +121,7 @@ export async function fetchLiveContext(
     ollama_catalog: 4
   };
   return results.sort((a, b) => (priority[a.source] ?? 99) - (priority[b.source] ?? 99));
-}
+}                  
 
 async function fetchSelectedTags(machineId: string, tagIds: string[]): Promise<LiveContext | null> {
   try {
@@ -160,7 +167,7 @@ async function fetchSelectedTags(machineId: string, tagIds: string[]): Promise<L
   } catch {
     return null;
   }
-}
+}                   
 
 async function fetchAlerts(machineId: string): Promise<LiveContext | null> {
   try {
@@ -196,7 +203,7 @@ async function fetchAlerts(machineId: string): Promise<LiveContext | null> {
   } catch {
     return null;
   }
-}
+}               
 
 async function fetchTags(machineId: string): Promise<LiveContext | null> {
   try {
@@ -235,7 +242,7 @@ async function fetchTags(machineId: string): Promise<LiveContext | null> {
   } catch {
     return null;
   }
-}
+}             
 
 async function fetchReports(machineId: string): Promise<LiveContext | null> {
   try {
@@ -270,4 +277,4 @@ async function fetchReports(machineId: string): Promise<LiveContext | null> {
   } catch {
     return null;
   }
-}
+}                  

@@ -33,29 +33,39 @@ export async function registerAlertDetectionWorker(boss: PgBoss, logger: BaseLog
         const latest = await prisma.tagLatest.findUnique({ where: { id: `${machineId}:${tagId}` } });
 
         if (!def || !latest) continue;
-        if (def.dataType !== "number") continue;
-        if (typeof latest.valueNumber !== "number") continue;
 
-        const v = latest.valueNumber;
         const now = new Date(ts);
-
         const triggers: Array<{ kind: "warn" | "alarm"; side: "high" | "low"; threshold: number }> = [];
 
-        if (def.alarmHigh !== null && def.alarmHigh !== undefined && v >= def.alarmHigh) {
-          triggers.push({ kind: "alarm", side: "high", threshold: def.alarmHigh });
-        } else if (def.warnHigh !== null && def.warnHigh !== undefined && v >= def.warnHigh) {
-          triggers.push({ kind: "warn", side: "high", threshold: def.warnHigh });
+        // ── Handle Boolean Alarms (Binary Faults) ──
+        if (def.dataType === "boolean") {
+          const isFault = latest.valueNumber === 1 || latest.valueBoolean === true;
+          if (isFault) {
+            triggers.push({ kind: "alarm", side: "high", threshold: 1 });
+          }
+        } 
+        // ── Handle Numeric Thresholds ──
+        else if (def.dataType === "number" && typeof latest.valueNumber === "number") {
+          const v = latest.valueNumber;
+
+          if (def.alarmHigh !== null && def.alarmHigh !== undefined && v >= def.alarmHigh) {
+            triggers.push({ kind: "alarm", side: "high", threshold: def.alarmHigh });
+          } else if (def.warnHigh !== null && def.warnHigh !== undefined && v >= def.warnHigh) {
+            triggers.push({ kind: "warn", side: "high", threshold: def.warnHigh });
+          }
+
+          if (def.alarmLow !== null && def.alarmLow !== undefined && v <= def.alarmLow) {
+            triggers.push({ kind: "alarm", side: "low", threshold: def.alarmLow });
+          } else if (def.warnLow !== null && def.warnLow !== undefined && v <= def.warnLow) {
+            triggers.push({ kind: "warn", side: "low", threshold: def.warnLow });
+          }
         }
 
-        if (def.alarmLow !== null && def.alarmLow !== undefined && v <= def.alarmLow) {
-          triggers.push({ kind: "alarm", side: "low", threshold: def.alarmLow });
-        } else if (def.warnLow !== null && def.warnLow !== undefined && v <= def.warnLow) {
-          triggers.push({ kind: "warn", side: "low", threshold: def.warnLow });
-        }
 
         if (triggers.length === 0) continue;
 
         const primary = triggers.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "alarm" ? -1 : 1))[0]!;
+        const v = latest.valueNumber ?? (latest.valueBoolean ? 1 : 0);
         const severity = computeSeverity(primary.kind);
         const dedupeKey = `${machineId}:${machineRevision}:${tagId}:${primary.kind}:${primary.side}`;
 
@@ -64,14 +74,22 @@ export async function registerAlertDetectionWorker(boss: PgBoss, logger: BaseLog
           const deliveryTargets: Array<{ deliveryId: string }> = [];
 
           await db.transaction(async (tx) => {
+            const displayTitle = def.dataType === "boolean" 
+              ? `${def.name} ACTIVE`
+              : `${def.name} ${primary.kind.toUpperCase()} (${primary.side})`;
+
+            const displayDesc = def.dataType === "boolean"
+              ? `Critical Fault: ${def.name} was triggered. [rule:binary_fault]`
+              : `${def.name} (${def.slug}): value ${v} ${def.unit ?? ""} exceeded ${primary.kind} ${primary.side} limit (threshold ${primary.threshold}). [rule:threshold_breach]`;
+
             await tx.insert(schema.alertEvents).values({
               id: alertId,
               machineId,
               ruleId: null,
               severity,
               status: "open",
-              title: `${def.name} ${primary.kind.toUpperCase()} (${primary.side})`,
-              description: `${def.name} (${def.slug}): value ${v} ${def.unit ?? ""} exceeded ${primary.kind} ${primary.side} limit (threshold ${primary.threshold}). [rule:threshold_breach]`,
+              title: displayTitle,
+              description: displayDesc,
               dedupeKey,
               payload: {
                 tagId,
@@ -84,6 +102,7 @@ export async function registerAlertDetectionWorker(boss: PgBoss, logger: BaseLog
               },
               startsAt: now
             });
+
 
             await tx.insert(schema.alertTags).values({
               alertEventId: alertId,

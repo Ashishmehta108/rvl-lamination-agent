@@ -104,8 +104,9 @@ export async function toolGetTags(machineId: string, args: { tagIds?: string[]; 
   return formatTagLines(machineId, rows as any[], defMap);
 }
 
-export async function toolGetAlerts(machineId: string, args: { includeRecentClosed?: boolean }): Promise<string> {
+export async function toolGetAlerts(machineId: string, args: { includeRecentClosed?: boolean; since?: Date }): Promise<string> {
   const includeRecent = args.includeRecentClosed !== false;
+  const sinceDate = args.since || new Date(Date.now() - 24 * 60 * 60 * 1000);
   const db = getPgDb();
   const openRows = await db
     .select()
@@ -116,7 +117,6 @@ export async function toolGetAlerts(machineId: string, args: { includeRecentClos
 
   let recentClosed: typeof openRows = [];
   if (includeRecent) {
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     recentClosed = await db
       .select()
       .from(schema.alertEvents)
@@ -124,7 +124,7 @@ export async function toolGetAlerts(machineId: string, args: { includeRecentClos
         and(
           eq(schema.alertEvents.machineId, machineId),
           ne(schema.alertEvents.status, "open" as any),
-          gte(schema.alertEvents.startsAt, since)
+          gte(schema.alertEvents.startsAt, sinceDate)
         )
       )
       .orderBy(desc(schema.alertEvents.startsAt))

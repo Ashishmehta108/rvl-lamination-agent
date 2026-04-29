@@ -57,6 +57,9 @@ export const config = {
   llmTargetMaxHistoryMessages: getEnvNum("LLM_TARGET_MAX_HISTORY_MESSAGES", 6),
   llmStrictGrounding: getEnvBool("LLM_STRICT_GROUNDING", true),
 
+  // Google Gemini
+  googleApiKey: process.env["GOOGLE_GENERATIVE_AI_API_KEY"] || "",
+
   /** Scheduled / narrative reports (defaults to chat model if unset) */
   ollamaReportModel: (() => {
     const r = process.env["OLLAMA_REPORT_MODEL"];

@@ -19,6 +19,7 @@
     "@fastify/helmet": "^13.0.0",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/websocket": "^11.2.0",
+    "@google/generative-ai": "^0.24.1",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@rvl/db-mongo": "0.0.0",
     "@rvl/db-postgres": "0.0.0",
