@@ -1236,12 +1236,23 @@ export async function registerChatRoutes(app: FastifyInstance) {
 
       // ── Validate request ─────────────────────────────────────────
       const parsed = ChatRequestSchema.safeParse(req.body);
+      console.log("[FUCKING RAW BODY]", req.body);
+      console.log("[FUCKING PARSING]", parsed);
+
       if (!parsed.success) {
         reqLog.warn({ issues: parsed.error.issues }, "chat_validation_failed");
+        console.log("[FUCKING VALIDATION FAILED]", parsed.error.issues);
         return reply.code(400).send({ error: "invalid_request", issues: parsed.error.issues });
       }
 
       const reqBody = parsed.data;
+      console.log("[FUCKING REQ BODY]", {
+        machineId: reqBody.machineId,
+        messageCount: reqBody.messages.length,
+        messages: reqBody.messages,
+        tagIds: reqBody.tagIds,
+      });
+
       reqLog.info(
         {
           machineId: reqBody.machineId ?? "(none)",
@@ -1253,6 +1264,8 @@ export async function registerChatRoutes(app: FastifyInstance) {
 
       if (reqBody.machineId) validateMachineAccess(reqBody.machineId);
       const machineId = reqBody.machineId || "lamination-01";
+      console.log("[FUCKING MACHINE ID]", machineId);
+
       const rawAuth = req.headers["authorization"] ?? req.headers["Authorization"] ?? "";
       const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth;
       const rawSession = req.headers["x-chat-session-id"];
@@ -1263,20 +1276,36 @@ export async function registerChatRoutes(app: FastifyInstance) {
         authHeader: typeof authHeader === "string" ? authHeader : null,
         ip: req.ip,
       });
+      console.log("[FUCKING SESSION KEY]", sessionKey);
+
       const cachedHistory = getChatHistoryCached(sessionKey);
+      console.log("[FUCKING CACHED HISTORY]", {
+        found: !!cachedHistory,
+        machineId: cachedHistory?.machineId,
+        messageCount: cachedHistory?.messages.length ?? 0,
+      });
 
       const lastUser = [...reqBody.messages].reverse().find(m => m.role === "user");
-      if (!lastUser) return reply.code(400).send({ error: "no_user_message" });
+      if (!lastUser) {
+        console.log("[FUCKING NO USER MESSAGE]", reqBody.messages);
+        return reply.code(400).send({ error: "no_user_message" });
+      }
 
+      console.log("[FUCKING LAST USER MESSAGE]", lastUser.content);
       reqLog.info({ query: lastUser.content.slice(0, 120) }, "chat_user_query");
 
       // ── PIPELINE STEP 1: Normalize input ─────────────────────────
       const normalized = normalizeInput(lastUser.content);
+      console.log("[FUCKING NORMALIZED INPUT]", normalized);
+      reqLog.debug({ normalized }, "input_normalized");
 
       // ── PIPELINE STEP 2: Risk detection ──────────────────────────
       const risk = detectRisk(normalized);
+      console.log("[FUCKING RISK]", risk);
+      reqLog.debug({ risk }, "risk_assessed");
 
       if (risk.block) {
+        console.log("[FUCKING BLOCKED]", risk.reason);
         reqLog.warn({ reason: risk.reason }, "chat_blocked_unsafe_input");
         return reply.send({
           answer: handleUnsafeInput(),
@@ -1289,13 +1318,20 @@ export async function registerChatRoutes(app: FastifyInstance) {
       }
 
       // ── PIPELINE STEP 3: Intent detection ────────────────────────
-      const previousQuery = reqBody.messages.length >= 2
-        ? reqBody.messages[reqBody.messages.length - 2]?.content
-        : undefined;
-      const intent = detectIntent(normalized, previousQuery);
+      const intent = detectIntent(normalized);
+      console.log("[FUCKING INTENT]", intent);
+      reqLog.debug({ intent }, "intent_detected");
+
+      const needsPreviousContext =
+        /\b(that|it|this|those|them|again|also|and the|what about|same)\b/.test(normalized.clean)
+        || (!intent.mentionedSlugs.length && intent.wantsTags);
+      console.log("[FUCKING NEEDS PREVIOUS CONTEXT]", needsPreviousContext);
+      reqLog.debug({ needsPreviousContext }, "context_continuity_check");
 
       // ── Short-circuit: fully deterministic handlers ───────────────
       if (intent.isGreeting) {
+        console.log("[FUCKING GREETING SHORT CIRCUIT]");
+        reqLog.info("short_circuit_greeting");
         return reply.send({
           answer: handleGreeting("RVL Laminator"),
           grounded: false,
@@ -1307,6 +1343,8 @@ export async function registerChatRoutes(app: FastifyInstance) {
       }
 
       if (intent.isEscalation) {
+        console.log("[FUCKING ESCALATION SHORT CIRCUIT]");
+        reqLog.info("short_circuit_escalation");
         return reply.send({
           answer: handleEscalation(),
           grounded: false,
@@ -1318,6 +1356,8 @@ export async function registerChatRoutes(app: FastifyInstance) {
       }
 
       if (intent.isOutOfScope) {
+        console.log("[FUCKING OUT OF SCOPE SHORT CIRCUIT]");
+        reqLog.info("short_circuit_out_of_scope");
         return reply.send({
           answer: handleOutOfScope(),
           grounded: false,
@@ -1328,7 +1368,10 @@ export async function registerChatRoutes(app: FastifyInstance) {
         });
       }
 
-      const useToolPipeline = wantsToolPipeline(lastUser.content, reqBody.tagIds) && !intent.isGreeting;
+      // const useToolPipeline = wantsToolPipeline(lastUser.content, reqBody.tagIds) && !intent.isGreeting;
+      const useToolPipeline = !intent.isGreeting && !intent.isEscalation && !intent.isOutOfScope;
+      console.log("[FUCKING USE TOOL PIPELINE]", useToolPipeline);
+      reqLog.debug({ useToolPipeline }, "pipeline_mode_selected");
 
       // ── Fetch context ─────────────────────────────────────────────
       const tFetch = Date.now();
@@ -1339,6 +1382,7 @@ export async function registerChatRoutes(app: FastifyInstance) {
         tagIds: reqBody.tagIds,
         topK: config.ragTopK,
       }).catch(err => {
+        console.log("[FUCKING RAG FAILED]", String(err));
         reqLog.warn({ err: String(err) }, "rag_query_failed");
         return [] as { text: string; chunkId: string; sourceUri?: string }[];
       });
@@ -1356,6 +1400,9 @@ export async function registerChatRoutes(app: FastifyInstance) {
         const runTools = async () => {
           const tP = Date.now();
           const plannerUser = `Machine ID: "${machineId}"\nUser query: ${normalized.clean}`;
+          console.log("[FUCKING PLANNER INPUT]", plannerUser);
+          reqLog.debug({ plannerUser }, "planner_input");
+
           let plannerOutput = "";
           try {
             plannerOutput = await chatOnceWithModel(
@@ -1369,13 +1416,21 @@ export async function registerChatRoutes(app: FastifyInstance) {
                 temperature: 0,
                 topP: config.ollamaTopP,
                 repeatPenalty: config.ollamaRepeatPenalty,
-              }
-            );
+              })
+
+            // plannerOutput = await chatOnce([
+            //   { role: "system", content: PLANNER_SYSTEM },
+            //   { role: "user", content: plannerUser },
+            // ]);
           } catch (err) {
+            console.log("[FUCKING PLANNER LLM FAILED]", String(err));
             reqLog.warn({ err: String(err) }, "planner_llm_failed");
           }
+
           plannerRaw = plannerOutput;
           plannerMs = Date.now() - tP;
+          console.log("[FUCKING PLANNER OUTPUT]", { plannerRaw, plannerMs });
+          reqLog.debug({ plannerRaw, plannerMs }, "planner_output");
 
           const plan = parsePlannerJson(plannerRaw);
           const calls: ChatToolCall[] =
@@ -1384,16 +1439,21 @@ export async function registerChatRoutes(app: FastifyInstance) {
               : defaultToolPlan(lastUser.content, reqBody.tagIds);
 
           plannerCalls = calls;
+          console.log("[FUCKING PLANNER CALLS]", calls);
+          reqLog.debug({ plan, calls }, "tool_plan_parsed");
 
           const tExec = Date.now();
           let out: Awaited<ReturnType<typeof runToolPlan>>;
           try {
             out = await runToolPlan(machineId, calls);
           } catch (err) {
+            console.log("[FUCKING TOOL PLAN EXEC FAILED]", String(err));
             reqLog.warn({ err: String(err) }, "tool_plan_exec_failed");
             out = { blocks: [], findCandidates: [] };
           }
           toolsExecMs = Date.now() - tExec;
+          console.log("[FUCKING TOOL OUTPUT]", { blocks: out.blocks, findCandidates: out.findCandidates, toolsExecMs });
+          reqLog.debug({ toolBlocks: out.blocks, toolsExecMs }, "tool_plan_executed");
           return out;
         };
 
@@ -1406,6 +1466,7 @@ export async function registerChatRoutes(app: FastifyInstance) {
         const [ragRes, liveRes] = await Promise.all([
           ragPromise,
           fetchLiveContext(lastUser.content, machineId, { tagIds: reqBody.tagIds }).catch(err => {
+            console.log("[FUCKING LIVE CONTEXT FAILED]", String(err));
             reqLog.warn({ err: String(err) }, "live_context_failed");
             return [] as { source: string; text: string }[];
           }),
@@ -1420,12 +1481,15 @@ export async function registerChatRoutes(app: FastifyInstance) {
       );
       const hasLiveData = liveContexts.length > 0;
 
+      console.log("[FUCKING LIVE CONTEXTS]", liveContexts);
+      console.log("[FUCKING RAG CONTEXTS]", ragContexts.map(r => ({ chunkId: r.chunkId, len: r.text.length })));
       reqLog.info(
         {
           fetchMs,
           toolPipeline: useToolPipeline,
           ragChunks: ragContexts.length,
           hasTagContext: hasLiveTags,
+          hasLiveData,
           liveSources: liveContexts.map(c => c.source),
         },
         "context_retrieval_done"
@@ -1433,17 +1497,24 @@ export async function registerChatRoutes(app: FastifyInstance) {
 
       // ── PIPELINE STEP 4: Detect missing context ───────────────────
       const ctxAssessment = detectMissingContext(liveContexts, intent);
+      console.log("[FUCKING CTX ASSESSMENT]", ctxAssessment);
+      reqLog.debug({ ctxAssessment }, "missing_context_assessed");
 
       // ── PIPELINE STEP 5: Select handler ──────────────────────────
       const handlerDecision = selectHandler(normalized, risk, intent, ctxAssessment);
-
+      console.log("[FUCKING HANDLER DECISION]", handlerDecision);
       reqLog.info(
-        { handler: handlerDecision.handler, reason: handlerDecision.reason },
+        { handler: handlerDecision.handler, reason: handlerDecision.reason, requiresLlm: handlerDecision.requiresLlm },
         "handler_selected"
       );
 
+      // Enrich reqLog with handler for all subsequent logs
+      const handlerLog = reqLog.child({ handler: handlerDecision.handler });
+
       // Short-circuit: handler has a deterministic fallback answer
       if (!handlerDecision.requiresLlm && handlerDecision.fallbackAnswer) {
+        console.log("[FUCKING DETERMINISTIC FALLBACK]", handlerDecision.fallbackAnswer.slice(0, 100));
+        handlerLog.info({ fallbackAnswer: handlerDecision.fallbackAnswer.slice(0, 100) }, "short_circuit_fallback");
         return reply.send({
           answer: handlerDecision.fallbackAnswer,
           grounded: false,
@@ -1457,6 +1528,8 @@ export async function registerChatRoutes(app: FastifyInstance) {
 
       // No-context edge case
       if (handlerDecision.handler === "no_context" && !handlerDecision.requiresLlm) {
+        console.log("[FUCKING NO CONTEXT]");
+        handlerLog.info("short_circuit_no_context");
         return reply.send({
           answer: handleNoContext(),
           grounded: false,
@@ -1475,6 +1548,7 @@ export async function registerChatRoutes(app: FastifyInstance) {
       });
 
       const health = deriveHealthFromLiveContexts(liveContexts);
+      console.log("[FUCKING HEALTH]", health);
 
       const contextPacket = buildContextPacket(
         handlerDecision,
@@ -1486,11 +1560,15 @@ export async function registerChatRoutes(app: FastifyInstance) {
         capturedAt,
         health
       );
+      console.log("[FUCKING CONTEXT PACKET]", {
+        fallback: contextPacket.fallback?.slice(0, 100),
+        health: contextPacket.health,
+      });
+      handlerLog.debug({ capturedAt, health }, "context_packet_built");
 
       // ── PIPELINE STEP 7: Build LLM prompt ────────────────────────
-      // Tool pipeline with live tags → compact two-phase prompt
-      // RAG-only or no tags → legacy document-grounded prompt
       const useTwoPhase = useToolPipeline && hasLiveData;
+      console.log("[FUCKING USE TWO PHASE]", useTwoPhase);
 
       const preparedTurn = prepareTurn({
         useTwoPhase,
@@ -1503,7 +1581,14 @@ export async function registerChatRoutes(app: FastifyInstance) {
       });
       const messages = preparedTurn.messages;
 
-      reqLog.info(
+      console.log("[FUCKING PREPARED TURN]", {
+        promptId: preparedTurn.promptId,
+        estimatedTokens: preparedTurn.estimatedTokens,
+        messageCount: messages.length,
+        systemPromptLen: preparedTurn.systemPrompt.length,
+        systemPromptPreview: preparedTurn.systemPrompt.slice(0, 300),
+      });
+      handlerLog.info(
         {
           model: config.ollamaModel,
           historyMsgs: messages.length,
@@ -1512,7 +1597,6 @@ export async function registerChatRoutes(app: FastifyInstance) {
           estimatedTokens: preparedTurn.estimatedTokens,
           promptId: preparedTurn.promptId,
           useTwoPhase,
-          handler: handlerDecision.handler,
         },
         "llm_request_starting"
       );
@@ -1523,11 +1607,13 @@ export async function registerChatRoutes(app: FastifyInstance) {
       try {
         rawAnswer = await chatOnce(messages);
       } catch (err) {
-        reqLog.error({ err: String(err), llmMs: Date.now() - tLlm }, "llm_chat_failed");
-        // Use deterministic fallback — do NOT fail the request
+        console.log("[FUCKING LLM FAILED]", String(err));
+        handlerLog.error({ err: String(err), llmMs: Date.now() - tLlm }, "llm_chat_failed");
         rawAnswer = "";
       }
       const llmMs = Date.now() - tLlm;
+      console.log("[FUCKING RAW LLM ANSWER]", { llmMs, rawAnswer });
+      handlerLog.debug({ llmMs, rawAnswer }, "llm_raw_output");
 
       // ── PIPELINE STEP 8: Validate LLM output ─────────────────────
       const validation = validateOutput(rawAnswer, contextPacket, liveContexts);
@@ -1536,19 +1622,26 @@ export async function registerChatRoutes(app: FastifyInstance) {
           ? enforceGroundingGuard(validation.cleaned, contextPacket, liveContexts)
           : { valid: false, reason: `validation_failed:${validation.reason}`, cleaned: validation.cleaned };
 
+      console.log("[FUCKING VALIDATION]", { valid: validation.valid, reason: validation.reason });
+      console.log("[FUCKING GROUNDING]", { valid: grounded.valid, reason: grounded.reason });
+      handlerLog.debug(
+        { validationOk: validation.valid, validationReason: validation.reason, groundingOk: grounded.valid, groundingReason: grounded.reason },
+        "output_validation"
+      );
+
       if (!validation.valid || !grounded.valid) {
-        reqLog.warn(
+        handlerLog.warn(
           {
             reason: !validation.valid ? validation.reason : grounded.reason,
             validationReason: validation.reason,
             groundingReason: grounded.reason,
-            handler: handlerDecision.handler,
           },
           "llm_output_failed_validation"
         );
       }
 
       const narrative = validation.valid && grounded.valid ? grounded.cleaned : contextPacket.fallback;
+      console.log("[FUCKING NARRATIVE]", narrative?.slice(0, 200));
 
       // ── PIPELINE STEP 9: Assemble final answer ────────────────────
       let answer: string;
@@ -1556,26 +1649,25 @@ export async function registerChatRoutes(app: FastifyInstance) {
       if (useTwoPhase) {
         answer = assembleFinalResponse(narrative, contextPacket, handlerDecision);
       } else {
-        // RAG path: just clean and guard
         answer = validation.valid ? validation.cleaned : contextPacket.fallback;
         if (ragContexts.length > 0) {
           answer = needsCitationGuard(answer, ragContexts.length);
         }
       }
 
-      // If tools returned live context, block contradictory "no live data" wording.
       answer = replaceUngroundedNoDataClaims(
         answer,
         hasLiveData,
         buildAvailableDataFallback(liveContexts, health)
       );
 
-      // Final length guard — if still empty, use fallback
       if (!answer || answer.trim().length < 5) {
+        console.log("[FUCKING ANSWER TOO SHORT — USING FALLBACK]", answer);
         answer = contextPacket.fallback;
       }
 
-      reqLog.info(
+      console.log("[FUCKING FINAL ANSWER]", answer);
+      handlerLog.info(
         {
           llmMs,
           totalMs: Date.now() - t0,
@@ -1583,7 +1675,6 @@ export async function registerChatRoutes(app: FastifyInstance) {
           answerPreview: answer.slice(0, 150),
           grounded: ragContexts.length > 0 || hasLiveData,
           useTwoPhase,
-          handler: handlerDecision.handler,
           validationOk: validation.valid && grounded.valid,
         },
         "chat_response_ready"
@@ -1597,7 +1688,9 @@ export async function registerChatRoutes(app: FastifyInstance) {
       ];
       try {
         putChatHistoryCached(sessionKey, machineId, historyToPersist, now);
+        console.log("[FUCKING HISTORY PERSISTED]", { messageCount: historyToPersist.length, sessionKey });
       } catch (err) {
+        console.log("[FUCKING HISTORY CACHE WRITE FAILED]", String(err));
         reqLog.warn({ err: String(err), sessionKey }, "chat_history_cache_write_failed");
       }
 
@@ -1669,6 +1762,17 @@ export async function registerChatRoutes(app: FastifyInstance) {
             score: c.score,
           }))
           : undefined;
+
+      console.log("[FUCKING RESPONSE PAYLOAD]", {
+        answerLen: answer.length,
+        grounded: ragContexts.length > 0 || hasLiveData,
+        health,
+        handler: handlerDecision.handler,
+        stepCount: steps.length,
+        ragCitations: ragContexts.length,
+        liveTagCount: tagBlocks.length > 0 ? liveTagLineCount : undefined,
+        findCandidates: findCandidatesOut?.length ?? 0,
+      });
 
       return reply.send({
         answer,
