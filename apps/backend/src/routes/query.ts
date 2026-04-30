@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { requireApiAuth, validateMachineAccess } from "../auth.js";
 import { getMongoClient } from "@rvl/db-mongo";
 import { getPgDb, schema } from "@rvl/db-postgres";
-import { desc, eq, and, sql } from "drizzle-orm";
+import { desc, eq, and, sql, gte, lt } from "drizzle-orm";
 import { newId } from "@rvl/shared";
 import { tryGetBoss } from "../queue/boss.js";
 import { Jobs } from "../workers/jobs.js";
@@ -225,13 +225,44 @@ export async function registerQueryRoutes(app: FastifyInstance) {
     requireApiAuth(req);
     const machineId = String((req.query as any)?.machineId ?? "");
     const status = (req.query as any)?.status ? String((req.query as any).status) : undefined;
+    const severity = (req.query as any)?.severity ? String((req.query as any).severity) : undefined;
+    const date = (req.query as any)?.date ? String((req.query as any).date) : undefined;
+    const fromRaw = (req.query as any)?.from ? String((req.query as any).from) : undefined;
+    const toRaw = (req.query as any)?.to ? String((req.query as any).to) : undefined;
     validateMachineAccess(machineId);
     const db = getPgDb();
-    const where = status
-      ? and(eq(schema.alertEvents.machineId, machineId), eq(schema.alertEvents.status, status as any))
-      : eq(schema.alertEvents.machineId, machineId);
-    const items = await db.select().from(schema.alertEvents).where(where).orderBy(desc(schema.alertEvents.startsAt)).limit(200);
-    return reply.send({ items });
+    const filters = [eq(schema.alertEvents.machineId, machineId)];
+    if (status && status !== "all") filters.push(eq(schema.alertEvents.status, status as any));
+    if (severity && severity !== "all") filters.push(eq(schema.alertEvents.severity, severity as any));
+    const dateOnly = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
+    const istStart = (value: string) => new Date(`${value}T00:00:00+05:30`);
+    let from: Date | null = null;
+    let to: Date | null = null;
+    if (date) {
+      from = istStart(date);
+      to = new Date(from);
+      to.setUTCDate(to.getUTCDate() + 1);
+    } else if (fromRaw) {
+      from = dateOnly(fromRaw) ? istStart(fromRaw) : new Date(fromRaw);
+      if (toRaw) {
+        to = dateOnly(toRaw) ? istStart(toRaw) : new Date(toRaw);
+        if (dateOnly(toRaw)) to.setUTCDate(to.getUTCDate() + 1);
+      }
+    }
+    if (from && !Number.isNaN(from.getTime())) filters.push(gte(schema.alertEvents.startsAt, from));
+    if (to && !Number.isNaN(to.getTime())) filters.push(lt(schema.alertEvents.startsAt, to));
+    const items = await db.select().from(schema.alertEvents).where(and(...filters)).orderBy(desc(schema.alertEvents.startsAt)).limit(200);
+    return reply.send({
+      query: {
+        machineId,
+        status: status ?? "all",
+        severity: severity ?? "all",
+        from: from?.toISOString() ?? null,
+        to: to?.toISOString() ?? null,
+        timezoneAssumption: date || (fromRaw && dateOnly(fromRaw)) ? "date-only inputs interpreted as Asia/Kolkata local days" : "explicit timestamps"
+      },
+      items
+    });
   });
 
   app.get("/reports/runs", async (req, reply) => {
@@ -431,8 +462,8 @@ export async function registerQueryRoutes(app: FastifyInstance) {
         from: smtpFromAddress("rvl-agent@localhost"),
         to: target,
         subject: "RVL Lamination Agent — SMTP Test Email",
-        text: `Your Gmail setup is working! \n\nTime: ${new Date().toISOString()}\nMachine: ${config.MACHINE_ID ?? "n/a"}`,
-        html: `<h3>Your Gmail setup is working!</h3><p>Time: <strong>${new Date().toISOString()}</strong></p><p>Machine: <code>${config.MACHINE_ID ?? "n/a"}</code></p>`
+        text: `Your Gmail setup is working! \n\nTime: ${new Date().toISOString()}\nMachine: ${config.machineId}`,
+        html: `<h3>Your Gmail setup is working!</h3><p>Time: <strong>${new Date().toISOString()}</strong></p><p>Machine: <code>${config.machineId}</code></p>`
       });
       return reply.send({ ok: true, message: `Test email sent to ${target}` });
     } catch (err: any) {

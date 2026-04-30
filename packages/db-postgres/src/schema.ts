@@ -18,6 +18,7 @@ export const deliveryChannel = pgEnum("delivery_channel", ["email", "webhook"]);
 export const deliveryStatus = pgEnum("delivery_status", ["queued", "sending", "sent", "failed"]);
 export const reportFormat = pgEnum("report_format", ["html", "json"]);
 export const runStatus = pgEnum("run_status", ["queued", "running", "succeeded", "failed"]);
+export const chatRole = pgEnum("chat_role", ["user", "assistant", "system"]);
 
 export const alertRules = pgTable(
   "alert_rules",
@@ -190,6 +191,41 @@ export const reportArtifacts = pgTable(
   })
 );
 
+export const chatSessions = pgTable(
+  "chat_sessions",
+  {
+    id: text("id").primaryKey(),
+    machineId: text("machine_id").notNull(),
+    title: text("title").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    metadata: jsonb("metadata").notNull().default({})
+  },
+  (t) => ({
+    machineUpdatedIdx: index("chat_sessions_machine_updated_idx").on(t.machineId, t.updatedAt),
+    deletedIdx: index("chat_sessions_deleted_idx").on(t.deletedAt)
+  })
+);
+
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    role: chatRole("role").notNull(),
+    content: text("content").notNull(),
+    toolCalls: jsonb("tool_calls").notNull().default([]),
+    tokenCount: integer("token_count"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => ({
+    sessionCreatedIdx: index("chat_messages_session_created_idx").on(t.sessionId, t.createdAt)
+  })
+);
+
 export const alertRulesRelations = relations(alertRules, ({ many }) => ({
   events: many(alertEvents)
 }));
@@ -231,5 +267,13 @@ export const runRelations = relations(reportRuns, ({ one, many }) => ({
 
 export const artifactRelations = relations(reportArtifacts, ({ one }) => ({
   run: one(reportRuns, { fields: [reportArtifacts.runId], references: [reportRuns.id] })
+}));
+
+export const chatSessionsRelations = relations(chatSessions, ({ many }) => ({
+  messages: many(chatMessages)
+}));
+
+export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
+  session: one(chatSessions, { fields: [chatMessages.sessionId], references: [chatSessions.id] })
 }));
 

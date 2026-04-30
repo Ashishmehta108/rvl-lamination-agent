@@ -39,11 +39,30 @@ export const config = {
   // DBs
   postgresUrl: getEnv("POSTGRES_URL"),
   mongoUrl: getEnv("MONGODB_URL"),
+  machineId: getEnv("MACHINE_ID", "lamination-01"),
 
   // Queue (pg-boss uses Postgres)
   queueSchema: getEnv("QUEUE_SCHEMA", "pgboss"),
 
-  // Local LLM via Ollama
+  // AI provider: gemini | bedrock
+  aiProvider: (getEnv("AI_PROVIDER", "gemini").toLowerCase() === "bedrock" ? "bedrock" : "gemini") as "gemini" | "bedrock",
+  geminiApiKey: getEnv("GEMINI_API_KEY", ""),
+  geminiModel: getEnv("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+  geminiReportModel: getEnv("GEMINI_REPORT_MODEL", getEnv("GEMINI_MODEL", "gemini-2.5-flash-lite")),
+  geminiEmbeddingModel: getEnv("GEMINI_EMBEDDING_MODEL", "text-embedding-004"),
+  geminiReportTemperature: getEnvNum("GEMINI_REPORT_TEMPERATURE", 0),
+  geminiReportStepTimeoutMs: getEnvNum("GEMINI_REPORT_STEP_TIMEOUT_MS", 60_000),
+
+  bedrockRegion: getEnv("BEDROCK_REGION", getEnv("AWS_REGION", "ap-south-1")),
+  bedrockModelId: getEnv("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0"),
+  bedrockReportModelId: getEnv("BEDROCK_REPORT_MODEL_ID", getEnv("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")),
+  bedrockEmbeddingModelId: getEnv("BEDROCK_EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0"),
+  bedrockMaxTokens: getEnvNum("BEDROCK_MAX_TOKENS", 4096),
+  bedrockReportTemperature: getEnvNum("BEDROCK_REPORT_TEMPERATURE", 0),
+  bedrockReportStepTimeoutMs: getEnvNum("BEDROCK_REPORT_STEP_TIMEOUT_MS", 60_000),
+  embeddingProvider: (getEnv("EMBEDDING_PROVIDER", "gemini").toLowerCase() === "bedrock" ? "bedrock" : "gemini") as "gemini" | "bedrock",
+
+  // Legacy Ollama settings retained for old env compatibility.
   ollamaBaseUrl: getEnv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
   ollamaModel: getEnv("OLLAMA_MODEL", "phi4-mini"),
   ollamaNumCtx: getEnvNum("OLLAMA_NUM_CTX", 2048),

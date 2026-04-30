@@ -2,8 +2,8 @@
 // packages/db-postgres. Add the table schema + migration, then uncomment the DB flush below.
 // import { getPgDb, schema } from "@rvl/db-postgres";
 
-import type { GroundingConfidence } from "./groundingGuard.js";
-import type { HandlerType } from "../handlers/chatHandler.js";
+type GroundingConfidence = "high" | "medium" | "low" | "none";
+type HandlerType = "status" | "alerts" | "tags" | "reports" | "general";
 
 export interface LlmTrace {
   traceId: string;

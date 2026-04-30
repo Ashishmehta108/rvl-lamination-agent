@@ -15,6 +15,20 @@
       "when": 1777015500992,
       "tag": "0001_large_excalibur",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777420000000,
+      "tag": "0002_chat_agent",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1777484628455,
+      "tag": "0003_giant_queen_noir",
+      "breakpoints": true
     }
   ]
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { DocumentText, ArrowLeft2 } from "iconsax-reactjs";
+import { DocumentText, ArrowLeft2, DocumentDownload } from "iconsax-reactjs";
 
 import AppHeader from "../../../components/AppHeader";
 import { api } from "../../../lib/api";
@@ -76,108 +76,57 @@ export default function ReportViewerPage() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)", display: "flex", flexDirection: "column" }}>
+    <div style={{ height: "100dvh", background: "var(--bg)", color: "var(--text)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <AppHeader
         title={`Report ${runId.slice(0, 12)}…`}
-        subtitle={run ? `${run.status} · ${new Date(run.windowStart).toISOString().slice(0, 10)} window` : "Loading run…"}
-        icon={<DocumentText size={14} color="var(--text-muted)" />}
+        subtitle={run ? `${run.status.charAt(0).toUpperCase() + run.status.slice(1)} · ${new Date(run.windowStart).toLocaleDateString(undefined, { month: "short", day: "numeric" })} window` : "Loading run…"}
+        icon={<DocumentText size={14} color="var(--accent)" variant="Bulk" />}
         rightSlot={
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <Link
               href={`/reports?machineId=${encodeURIComponent(machineId)}`}
-              style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--accent)", textDecoration: "none" }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--text-muted)", textDecoration: "none", transition: "color .15s" }}
+              onMouseEnter={(e) => e.currentTarget.style.color = "var(--text)"}
+              onMouseLeave={(e) => e.currentTarget.style.color = "var(--text-muted)"}
             >
-              <ArrowLeft2 size={14} /> All reports
+              <ArrowLeft2 size={14} /> Back to List
             </Link>
-            <button type="button" className="rvl-btn-primary" style={{ fontSize: 12 }} onClick={downloadRaw}>
-              Download HTML
+            <div style={{ width: 1, height: 16, background: "var(--border)" }} />
+            <button type="button" className="rvl-btn-primary" onClick={downloadRaw}>
+              <DocumentDownload size={14} /> Download HTML
             </button>
           </div>
         }
       />
 
-      {run?.metrics && (
-        <section className="rvl-card" style={{ margin: "0 20px 16px", maxWidth: 1100, alignSelf: "center", width: "calc(100% - 40px)", padding: "14px 16px" }}>
-          <h3 style={{ margin: "0 0 10px", fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", color: "var(--text-muted)", textTransform: "uppercase" }}>
-            Report composition
-          </h3>
-          <CompositionBody metrics={run.metrics} />
-        </section>
-      )}
-
-      <div style={{ flex: 1, minHeight: 400, margin: "0 20px 24px", maxWidth: 1100, width: "calc(100% - 40px)", alignSelf: "center" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "24px 20px 0", maxWidth: 1000, margin: "0 auto", width: "100%", overflow: "hidden" }}>
         {loadErr && (
-          <div className="rvl-card" style={{ padding: 20, color: "#c45" }}>
+          <div className="rvl-card" style={{ padding: 20, color: "#dc2626", marginBottom: 20 }}>
             {loadErr}
           </div>
         )}
-        {html && (
-          <iframe
-            title="Report HTML"
-            srcDoc={html}
-            sandbox=""
-            style={{
-              width: "100%",
-              height: "min(78vh, 900px)",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-              background: "#0b0f14",
-            }}
-          />
-        )}
-        {!html && !loadErr && <div className="rvl-card" style={{ padding: 24, color: "var(--text-faint)" }}>Loading report…</div>}
+        
+        {!html && !loadErr ? (
+           <div className="rvl-card" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-faint)", marginBottom: 24 }}>
+             <span style={{ animation: "rvl-flash 2s infinite" }}>Loading report…</span>
+           </div>
+        ) : html ? (
+          <div className="rvl-card" style={{ flex: 1, padding: 0, overflow: "hidden", borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderBottom: "none" }}>
+            <iframe
+              title="Report HTML"
+              srcDoc={html}
+              sandbox=""
+              style={{
+                width: "100%",
+                height: "100%",
+                border: "none",
+                background: "transparent",
+                display: "block"
+              }}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
-  );
-}
-
-function CompositionBody({ metrics }: { metrics: Record<string, unknown> }) {
-  const fs = metrics.factsSummary as Record<string, unknown> | undefined;
-  if (fs && typeof fs === "object") {
-    return (
-      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6 }}>
-        {Object.entries(fs).map(([k, v]) => (
-          <li key={k}>
-            <strong style={{ color: "var(--text)" }}>{k}</strong>: {typeof v === "object" ? JSON.stringify(v) : String(v)}
-          </li>
-        ))}
-        {metrics.artifactBytes != null && (
-          <li>
-            <strong style={{ color: "var(--text)" }}>artifactBytes</strong>: {String(metrics.artifactBytes)}
-          </li>
-        )}
-        {metrics.emailToCount != null && (
-          <li>
-            <strong style={{ color: "var(--text)" }}>emailToCount</strong>: {String(metrics.emailToCount)}
-          </li>
-        )}
-        {metrics.emailSent != null && (
-          <li>
-            <strong style={{ color: "var(--text)" }}>emailSent</strong>: {String(metrics.emailSent)}
-          </li>
-        )}
-        {metrics.emailError != null && String(metrics.emailError).length > 0 && (
-          <li>
-            <strong style={{ color: "var(--text)" }}>emailError</strong>: {String(metrics.emailError)}
-          </li>
-        )}
-      </ul>
-    );
-  }
-  return (
-    <pre
-      style={{
-        margin: 0,
-        fontSize: 11,
-        overflow: "auto",
-        maxHeight: 220,
-        background: "var(--surface-2)",
-        padding: 12,
-        borderRadius: 6,
-        border: "1px solid var(--border-subtle)",
-      }}
-    >
-      {JSON.stringify(metrics, null, 2)}
-    </pre>
   );
 }

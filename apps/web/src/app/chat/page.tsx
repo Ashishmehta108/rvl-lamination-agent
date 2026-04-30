@@ -2,46 +2,52 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Flash, SidebarLeft, Cpu } from "iconsax-reactjs";
-import AppHeader from "@/components/AppHeader";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import MessageItem from "@/components/chat/MessageItem";
 import ChatInput from "@/components/chat/ChatInput";
 import { useChat } from "@/hooks/useChat";
+import { api } from "@/lib/api";
+import { usePathname } from "next/navigation";
 
 const SUGGESTED = [
   "What alerts fired today on this machine?",
-  "List the latest tag values",
-  "What does low nip pressure usually mean?"
+  "Show me the trend for MASTER_SPEED_PCT last 2 days",
+  "What is the current line efficiency?",
+  "List all live tag values",
 ];
-
-const CHAT_MODEL_LABEL = process.env.NEXT_PUBLIC_OLLAMA_MODEL_LABEL ?? "llama3.2:1b";
 
 export default function ChatPage() {
   const {
     conversations, active, activeId, setActiveId, loading,
-    startNewChat, deleteConversation, updateMachineId, sendMessage
+    startNewChat, deleteConversation, updateMachineId, sendMessage,
   } = useChat();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
   const [search, setSearch] = useState("");
   const [input, setInput] = useState("");
-  const bottomRef = useRef<HTMLDivElement>(null);
 
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+
+  // Responsive detection
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 768px)");
     const apply = () => {
       const m = mq.matches;
       setIsMobile(m);
-      if (m) setSidebarOpen(false);
+      setSidebarOpen(!m);
     };
     apply();
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, []);
 
+  // Auto-scroll
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = scrollAreaRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [active?.messages, loading]);
 
   const handleSend = (text?: string) => {
@@ -56,157 +62,366 @@ export default function ChatPage() {
 
   return (
     <>
-      <style>{`
-        @keyframes rvl-bounce { 0%,80%,100%{transform:translateY(0);opacity:.35}40%{transform:translateY(-5px);opacity:1} }
-        @keyframes rvl-fadein { from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)} }
-        @keyframes rvl-blink  { 0%,100%{opacity:1}50%{opacity:0} }
-        .rvl-msg { animation: rvl-fadein .24s cubic-bezier(.22,1,.36,1) both }
-        .rvl-conv-item:hover .rvl-del { opacity:1!important }
-        .rvl-conv-item:hover { background:var(--surface-2)!important }
-        .rvl-conv-item.active { background:var(--surface-3)!important; border-left:2px solid var(--accent)!important }
-        .rvl-chip:hover { background:var(--surface-3)!important; border-color:var(--text-faint)!important }
-        .rvl-input-focused { border-color: var(--accent)!important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent)!important }
-        .rvl-sidebar { transition: width .22s cubic-bezier(.4,0,.2,1), opacity .2s }
+      {/* ── Styles ── */}
+      <style jsx global>{`
+        @keyframes rvl-bounce       { 0%,80%,100%{transform:translateY(0);opacity:.35}40%{transform:translateY(-5px);opacity:1} }
+        @keyframes rvl-fadein       { from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)} }
+        @keyframes rvl-pulse-ring   { 0%{box-shadow:0 0 0 0 rgba(158,90,50,.4)}70%{box-shadow:0 0 0 10px rgba(158,90,50,0)}100%{box-shadow:0 0 0 0 rgba(158,90,50,0)} }
+        @keyframes rvl-shimmer-bg   { from{background-position:200% 0}to{background-position:-200% 0} }
+
+        /* TEXT shimmer — like Vercel */
+        @keyframes rvl-text-shimmer {
+          0%   { background-position: 100% 50%; }
+          100% { background-position: -100% 50%; }
+        }
+        .rvl-shimmer-text {
+          background: linear-gradient(
+            90deg,
+            var(--text-faint) 0%,
+            var(--text) 30%,
+            var(--text-faint) 60%,
+            var(--text-faint) 100%
+          );
+          background-size: 200% 100%;
+          -webkit-background-clip: text;
+          background-clip: text;
+          -webkit-text-fill-color: transparent;
+          animation: rvl-text-shimmer 1.6s linear infinite;
+        }
+
+        .rvl-noscroll::-webkit-scrollbar { display:none; }
+        .rvl-noscroll { -ms-overflow-style:none; scrollbar-width:none; }
       `}</style>
 
-      <div className="rvl-chat-layout" style={{ display: "flex", height: "100dvh", background: "var(--bg)", overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom, 0)" }}>
-        {isMobile && sidebarOpen ? (
-          <button
-            type="button"
-            aria-label="Close conversation list"
-            onClick={() => setSidebarOpen(false)}
+      {/*
+        Root shell: full viewport, no overflow escaping.
+        Desktop: sidebar + main side-by-side.
+        Mobile: just main (sidebar overlays, bottom nav below).
+      */}
+      <div
+        style={{
+          display: "flex",
+          height: "100dvh",
+          width: "100%",
+          overflow: "hidden",
+          background: "var(--bg)",
+          color: "var(--text)",
+          position: "relative",
+        }}
+      >
+        {/* ── SIDEBAR ── */}
+        {isMobile ? (
+          /* Mobile: full overlay */
+          <>
+            <div
+              style={{
+                position: "fixed", inset: "0 auto 0 0", zIndex: 50,
+                width: "min(288px, 88vw)",
+                transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
+                transition: "transform .24s cubic-bezier(.4,0,.2,1)",
+                boxShadow: sidebarOpen ? "12px 0 40px rgba(0,0,0,0.18)" : "none",
+              }}
+            >
+              <ChatSidebar
+                open={sidebarOpen}
+                onClose={() => setSidebarOpen(false)}
+                onNewChat={() => { startNewChat(); setSidebarOpen(false); }}
+                search={search}
+                onSearchChange={setSearch}
+                conversations={conversations}
+                activeId={activeId}
+                onSelect={(id) => { setActiveId(id); setSidebarOpen(false); }}
+                onDelete={deleteConversation}
+                layout="overlay"
+              />
+            </div>
+            {sidebarOpen && (
+              <div
+                onClick={() => setSidebarOpen(false)}
+                style={{
+                  position: "fixed", inset: 0, zIndex: 49,
+                  background: "rgba(0,0,0,0.4)",
+                  backdropFilter: "blur(2px)",
+                }}
+              />
+            )}
+          </>
+        ) : (
+          /* Desktop: docked — collapsed shows a thin icon-strip (Notion-style) */
+          <div
             style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 45,
-              border: "none",
-              margin: 0,
-              padding: 0,
-              background: "rgba(15,14,12,0.42)",
-              cursor: "pointer"
+              flexShrink: 0,
+              width: sidebarOpen ? 260 : 44,
+              transition: "width .22s cubic-bezier(.4,0,.2,1)",
+              overflow: "hidden",
+              borderRight: "1px solid var(--border)",
+              background: "var(--surface)",
+              display: "flex",
+              flexDirection: "column",
+              position: "relative",
+              zIndex: 10,
             }}
-          />
-        ) : null}
-        <ChatSidebar
-          open={sidebarOpen}
-          onClose={() => setSidebarOpen(false)}
-          onNewChat={() => {
-            startNewChat();
-            if (isMobile) setSidebarOpen(false);
-          }}
-          search={search}
-          onSearchChange={setSearch}
-          conversations={conversations}
-          activeId={activeId}
-          onSelect={(id) => {
-            setActiveId(id);
-            if (isMobile) setSidebarOpen(false);
-          }}
-          onDelete={deleteConversation}
-          layout={isMobile ? "overlay" : "docked"}
-        />
-
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-          <AppHeader
-            backHref="/"
-            backLabel="Dashboard"
-            title={active?.title ?? "RAG Assistant"}
-            subtitle={
-              active
-                ? `${active.machineId} · ${CHAT_MODEL_LABEL} · RAG`
-                : `RVL Lamination · ${CHAT_MODEL_LABEL} · RAG`
-            }
-            icon={<Flash size={14} color="var(--accent)" variant="Bulk" />}
-            rightSlot={
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {!sidebarOpen && (
-                  <button onClick={() => setSidebarOpen(true)} title="Open sidebar" style={{ background: "none", border: "1px solid var(--border)", borderRadius: 7, padding: 6, cursor: "pointer", display: "flex", color: "var(--text-muted)" }}>
-                    <SidebarLeft size={14} color="currentColor" />
-                  </button>
-                )}
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Machine</span>
-                <input
-                  value={active?.machineId ?? "machine_1"}
-                  onChange={e => updateMachineId(e.target.value)}
-                  style={{ width: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, padding: "4px 9px", fontSize: 12, color: "var(--text)", outline: "none", fontFamily: "monospace" }}
-                />
-                <button
-                  type="button"
-                  title="Ask about open and recent alerts"
-                  onClick={() => handleSend("Show open alerts and any alerts closed in the last 24 hours for this machine.")}
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    background: "var(--surface-2)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 6,
-                    padding: "4px 10px",
-                    color: "var(--accent)",
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                  }}
-                >
-                  Alerts
-                </button>
-              </div>
-            }
-          />
-
-          <div style={{ flex: 1, overflowY: "auto", padding: isEmpty ? 0 : "24px 0 8px" }}>
-            {isEmpty ? (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 20, padding: "0 20px", textAlign: "center" }}>
-                <div style={{ width: 52, height: 52, borderRadius: 14, background: "var(--accent-faint)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Flash size={24} color="var(--accent)" variant="Bulk" />
-                </div>
-                <div>
-                  <div style={{ fontSize: 17, fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>RVL Lamination Assistant</div>
-                  <div style={{ fontSize: 13, color: "var(--text-muted)", maxWidth: 360, lineHeight: 1.6 }}>
-                    Ask anything about your machine's tags, alerts, or operational data.
-                  </div>
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", maxWidth: 540 }}>
-                  {SUGGESTED.map(s => (
-                    <button key={s} className="rvl-chip" onClick={() => handleSend(s)} style={{ fontSize: 12, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 20, padding: "6px 14px", color: "var(--text-muted)", cursor: "pointer", transition: "background .15s", fontFamily: "inherit" }}>
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
+          >
+            {sidebarOpen ? (
+              <ChatSidebar
+                open={sidebarOpen}
+                onClose={() => setSidebarOpen(false)}
+                onNewChat={startNewChat}
+                search={search}
+                onSearchChange={setSearch}
+                conversations={conversations}
+                activeId={activeId}
+                onSelect={setActiveId}
+                onDelete={deleteConversation}
+                layout="docked"
+              />
             ) : (
-              <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 20px", display: "flex", flexDirection: "column", gap: 6 }}>
+              /* Collapsed dock strip */
+              <CollapsedDock onOpen={() => setSidebarOpen(true)} onNewChat={startNewChat} />
+            )}
+          </div>
+        )}
+
+        {/* ── MAIN CHAT COLUMN ── */}
+        <main
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            minWidth: 0,
+            background: "var(--bg)",
+            position: "relative",
+          }}
+        >
+          {/* Mobile top bar */}
+          {isMobile && (
+            <div style={{
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 16px",
+              borderBottom: "1px solid var(--border)",
+              background: "var(--surface)",
+            }}>
+              <button
+                onClick={() => setSidebarOpen(true)}
+                style={{
+                  background: "none", border: "1px solid var(--border)",
+                  borderRadius: 8, padding: 7, cursor: "pointer",
+                  color: "var(--text-faint)", display: "flex", alignItems: "center",
+                }}
+              >
+                <SidebarLeft size={16} color="currentColor" />
+              </button>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+                {active?.title ?? "Assistant"}
+              </span>
+            </div>
+          )}
+
+          {/* Scrollable messages */}
+          <div
+            ref={scrollAreaRef}
+            className="rvl-noscroll"
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              overflowX: "hidden",
+              overscrollBehavior: "contain",
+            }}
+          >
+            {isEmpty ? (
+              <EmptyState onSend={handleSend} />
+            ) : (
+              <div style={{
+                maxWidth: 720, margin: "0 auto",
+                padding: "32px 16px 160px",
+                display: "flex", flexDirection: "column", gap: 8,
+              }}>
                 {msgs.map((msg, i) => (
                   <MessageItem key={i} msg={msg} isLast={i === msgs.length - 1} />
                 ))}
                 {loading && (
-                  <div className="rvl-msg" style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "4px 0" }}>
-                    <div style={{ flexShrink: 0, marginTop: 3, width: 26, height: 26, borderRadius: 7, background: "var(--accent-faint)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <Cpu size={13} color="var(--accent)" variant="Bulk" />
-                    </div>
+                  <div style={{
+                    display: "flex", alignItems: "flex-start", gap: 16,
+                    padding: "16px 0",
+                    animation: "rvl-fadein .3s ease both",
+                  }}>
+                    <AgentAvatar />
                     <ThinkingIndicator />
                   </div>
                 )}
-                <div ref={bottomRef} style={{ height: 4 }} />
+                <div ref={bottomRef} />
               </div>
             )}
           </div>
 
-          <ChatInput
-            input={input}
-            onInputChange={setInput}
-            onSend={handleSend}
-            loading={loading}
-            placeholder={active ? "Ask about tags, alerts, or operational data…" : "Start a new conversation…"}
-          />
-        </div>
+          {/* Sticky input */}
+          <div style={{
+            position: "absolute", bottom: isMobile ? 64 : 0,
+            left: 0, right: 0,
+            padding: "16px 16px 20px",
+            background: "linear-gradient(to top, var(--bg) 60%, transparent)",
+            zIndex: 20,
+            pointerEvents: "none",
+          }}>
+            <div style={{ maxWidth: 720, margin: "0 auto", pointerEvents: "auto" }}>
+              <ChatInput
+                input={input}
+                onInputChange={setInput}
+                onSend={handleSend}
+                loading={loading}
+                placeholder={active ? "Ask about tags, alerts, or trends…" : "Start a new conversation…"}
+              />
+            </div>
+          </div>
+        </main>
       </div>
+
     </>
   );
 }
 
+/* ── Collapsed sidebar dock (Notion-style) ── */
+function CollapsedDock({ onOpen, onNewChat }: { onOpen: () => void; onNewChat: () => void }) {
+  return (
+    <div style={{
+      display: "flex", flexDirection: "column", alignItems: "center",
+      paddingTop: 12, gap: 4, width: 44,
+    }}>
+      <button
+        onClick={onOpen}
+        title="Open sidebar"
+        style={{
+          background: "none", border: "none", cursor: "pointer",
+          padding: 10, borderRadius: 8, color: "var(--text-faint)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          transition: "background .15s, color .15s",
+        }}
+        onMouseEnter={e => {
+          (e.currentTarget as HTMLButtonElement).style.background = "var(--surface-2)";
+          (e.currentTarget as HTMLButtonElement).style.color = "var(--text)";
+        }}
+        onMouseLeave={e => {
+          (e.currentTarget as HTMLButtonElement).style.background = "none";
+          (e.currentTarget as HTMLButtonElement).style.color = "var(--text-faint)";
+        }}
+      >
+        <SidebarLeft size={17} color="currentColor" />
+      </button>
+      <button
+        onClick={onNewChat}
+        title="New chat"
+        style={{
+          background: "none", border: "none", cursor: "pointer",
+          padding: 10, borderRadius: 8, color: "var(--text-faint)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          transition: "background .15s, color .15s",
+        }}
+        onMouseEnter={e => {
+          (e.currentTarget as HTMLButtonElement).style.background = "var(--surface-2)";
+          (e.currentTarget as HTMLButtonElement).style.color = "var(--text)";
+        }}
+        onMouseLeave={e => {
+          (e.currentTarget as HTMLButtonElement).style.background = "none";
+          (e.currentTarget as HTMLButtonElement).style.color = "var(--text-faint)";
+        }}
+      >
+        {/* Pencil icon substitute */}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-6" />
+          <path d="M18.375 2.625a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4Z" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+/* ── Agent avatar ── */
+function AgentAvatar() {
+  return (
+    <div style={{
+      flexShrink: 0, width: 32, height: 32, borderRadius: 10,
+      background: "var(--accent-faint)", border: "1px solid rgba(158,90,50,.2)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      boxShadow: "0 1px 4px rgba(0,0,0,.06)",
+    }}>
+      <Cpu size={16} color="var(--accent)" variant="Bulk" />
+    </div>
+  );
+}
+
+/* ── Empty state ── */
+function EmptyState({ onSend }: { onSend: (t: string) => void }) {
+  return (
+    <div style={{
+      display: "flex", flexDirection: "column", alignItems: "center",
+      justifyContent: "center", minHeight: "80dvh",
+      gap: 32, padding: "0 24px", textAlign: "center",
+      animation: "rvl-fadein .5s ease both",
+    }}>
+      <div style={{ position: "relative" }}>
+        <div style={{
+          width: 64, height: 64, borderRadius: 18,
+          background: "var(--accent-faint)", border: "1px solid rgba(158,90,50,.2)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <Flash size={32} color="var(--accent)" variant="Bulk" />
+        </div>
+        <div style={{
+          position: "absolute", inset: 0, borderRadius: 18,
+          animation: "rvl-pulse-ring 3s infinite",
+          pointerEvents: "none",
+        }} />
+      </div>
+      <div style={{ maxWidth: 400 }}>
+        <h2 style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em", margin: "0 0 10px" }}>
+          RVL Lamination Assistant
+        </h2>
+        <p style={{ fontSize: 13.5, color: "var(--text-muted)", lineHeight: 1.6, margin: 0 }}>
+          Operational intelligence at your fingertips. Ask about machine performance,
+          active alerts, or production trends.
+        </p>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", maxWidth: 480 }}>
+        {SUGGESTED.map(s => (
+          <button
+            key={s}
+            onClick={() => onSend(s)}
+            style={{
+              padding: "8px 16px", fontSize: 12, fontWeight: 500,
+              background: "var(--surface)", border: "1px solid var(--border)",
+              borderRadius: 999, color: "var(--text-muted)",
+              cursor: "pointer", fontFamily: "inherit",
+              transition: "background .15s, border-color .15s, color .15s",
+            }}
+            onMouseEnter={e => {
+              const b = e.currentTarget as HTMLButtonElement;
+              b.style.background = "var(--surface-2)";
+              b.style.color = "var(--text)";
+            }}
+            onMouseLeave={e => {
+              const b = e.currentTarget as HTMLButtonElement;
+              b.style.background = "var(--surface)";
+              b.style.color = "var(--text-muted)";
+            }}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Thinking indicator with Vercel-style text shimmer ── */
 const THINKING_STEPS = [
-  { label: "Searching documents" },
-  { label: "Querying databases" },
-  { label: "Generating response" },
+  "Analyzing operational context",
+  "Fetching sensor telemetry",
+  "Evaluating thresholds",
+  "Finalizing response",
 ];
 
 function ThinkingIndicator() {
@@ -220,36 +435,73 @@ function ThinkingIndicator() {
   }, []);
 
   return (
-    <div style={{ paddingTop: 6, paddingLeft: 2, display: "flex", flexDirection: "column", gap: 0 }}>
-      {THINKING_STEPS.slice(0, step + 1).map((s, i) => (
-        <div
-          key={i}
-          style={{
-            display: "flex", alignItems: "center", gap: 10, fontSize: 12,
-            color: i === step ? "var(--text-muted)" : "var(--text-faint)",
-            animation: "rvl-fadein .25s ease both",
-            padding: "3px 0",
-          }}
-        >
-          {/* Step indicator dot */}
-          <div style={{
-            width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-            background: i < step ? "#22c55e" : i === step ? "var(--accent)" : "var(--border)",
-            transition: "background .3s",
-            boxShadow: i === step ? "0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent)" : "none"
-          }} />
-          <span>{s.label}</span>
-          {i === step && <TypingDots />}
-        </div>
-      ))}
-    </div>
-  );
-}
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, maxWidth: 320 }}>
+      {/* Skeleton bars */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+        {[0.75, 0.5].map((w, i) => (
+          <div key={i} style={{
+            height: 10, width: `${w * 100}%`,
+            background: "var(--surface-2)", borderRadius: 99, overflow: "hidden", position: "relative",
+          }}>
+            <div style={{
+              position: "absolute", inset: 0,
+              background: "linear-gradient(90deg,transparent,rgba(158,90,50,.08),transparent)",
+              backgroundSize: "200% 100%",
+              animation: `rvl-shimmer-bg ${1.8 + i * 0.4}s linear infinite`,
+            }} />
+          </div>
+        ))}
+      </div>
 
-function TypingDots() {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, height: 16, marginLeft: 2 }}>
-      {[0, 1, 2].map(n => <span key={n} style={{ display: "inline-block", width: 3, height: 3, borderRadius: "50%", background: "var(--text-faint)", animation: "rvl-bounce 1.3s ease-in-out infinite", animationDelay: `${n * 0.18}s` }} />)}
-    </span>
+      {/* Step list with text shimmer on active step */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {THINKING_STEPS.slice(0, step + 1).map((label, i) => {
+          const isCurrentStep = i === step;
+          const isDone = i < step;
+          return (
+            <div
+              key={i}
+              style={{
+                display: "flex", alignItems: "center", gap: 10,
+                fontSize: 11.5, fontWeight: 500,
+                opacity: isDone ? 0.5 : 1,
+                transition: "opacity .4s",
+              }}
+            >
+              {/* Dot */}
+              <div style={{
+                width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+                background: isDone ? "var(--green, #22c55e)" : isCurrentStep ? "var(--accent)" : "var(--border)",
+                transform: isCurrentStep ? "scale(1.3)" : "scale(1)",
+                boxShadow: isCurrentStep ? "0 0 8px rgba(158,90,50,.4)" : "none",
+                transition: "all .3s",
+              }} />
+
+              {/* Label — shimmer on active, plain on done */}
+              <span
+                className={isCurrentStep ? "rvl-shimmer-text" : ""}
+                style={!isCurrentStep ? { color: isDone ? "var(--text-faint)" : "var(--text)" } : undefined}
+              >
+                {label}
+              </span>
+
+              {/* Bouncing dots on active */}
+              {isCurrentStep && (
+                <span style={{ display: "flex", gap: 2, marginLeft: 2 }}>
+                  {[0, 1, 2].map(n => (
+                    <span key={n} style={{
+                      width: 3, height: 3, borderRadius: "50%",
+                      background: "var(--text-faint)",
+                      display: "inline-block",
+                      animation: `rvl-bounce 1.2s ${n * 0.2}s infinite`,
+                    }} />
+                  ))}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
