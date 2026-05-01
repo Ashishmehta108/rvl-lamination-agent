@@ -1,0 +1,46 @@
+[Unit]
+Description=Nonwoven Lamination AI Agent — Modbus TCP + Data Pipeline
+Documentation=https://github.com/your-org/nonwoven-agent
+After=network-online.target
+Wants=network-online.target
+# Restart if ngrok tunnel hasn't come up yet — pipeline will buffer in WAL
+
+[Service]
+# ── Identity ─────────────────────────────────────────────────
+# Run as root only when using privileged port 502.
+# For port 5020+ use: User=nonwoven  Group=nonwoven
+User=root
+Group=root
+
+# ── Working directory & script ───────────────────────────────
+WorkingDirectory=/opt/nonwoven-agent
+ExecStart=/opt/nonwoven-agent/venv/bin/python3 /opt/nonwoven-agent/data_source.py
+
+# ── Restart policy ───────────────────────────────────────────
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+# ── Environment ──────────────────────────────────────────────
+EnvironmentFile=-/opt/nonwoven-agent/.env
+
+# ── Logging (goes to journald, readable via `journalctl -u nonwoven-agent -f`) ──
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nonwoven-agent
+
+# ── Resource limits ──────────────────────────────────────────
+# Prevent a runaway process from filling disk with WAL files
+LimitNOFILE=65536
+MemoryMax=256M
+CPUQuota=80%
+
+# ── Hardening (optional, remove if it causes issues) ────────
+ProtectSystem=strict
+ReadWritePaths=/var/lib/nonwoven-agent
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

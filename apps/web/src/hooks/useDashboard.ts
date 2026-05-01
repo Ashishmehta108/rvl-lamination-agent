@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from "react";
 export interface TagLatest {
   machineId: string;
   tagId: string;
+  slug?: string;
+  name?: string;
   ts: string;
   valueNumber?: number | null;
   valueBool?: boolean | null;
@@ -24,6 +26,8 @@ export interface ReportRun {
   id: string;
   status: string;
   createdAt: string;
+  windowStart?: string;
+  windowEnd?: string;
   metrics?: any;
 }
 
@@ -43,7 +47,9 @@ export function useDashboard(machineId: string) {
       const point: any = { t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) };
       tagsData.items.forEach((item) => {
         if (typeof item.valueNumber === 'number') {
-          point[item.tagId] = item.valueNumber;
+          // Use slug if available for easier mapping in components, fallback to tagId
+          const key = item.slug || item.tagId;
+          point[key] = item.valueNumber;
         }
       });
 
@@ -60,8 +66,8 @@ export function useDashboard(machineId: string) {
   );
 
   const { data: reportsData, error: reportsError, mutate: mutateReports } = useSWR(
-    [`/reports/runs`, machineId],
-    () => api.get<{ items: ReportRun[] }>(`/reports/runs`, { machineId }),
+    [`/reports/runs`, machineId, "8"],
+    () => api.get<{ items: ReportRun[] }>(`/reports/runs`, { machineId, limit: "8" }),
     { refreshInterval: 10000 }
   );
 

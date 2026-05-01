@@ -46,15 +46,40 @@ export const config = {
   // Local LLM via Ollama
   ollamaBaseUrl: getEnv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
   ollamaModel: getEnv("OLLAMA_MODEL", "phi4-mini"),
-  ollamaNumCtx: getEnvNum("OLLAMA_NUM_CTX", 4096),
+  ollamaNumCtx: getEnvNum("OLLAMA_NUM_CTX", 2048),
   ollamaTemperature: getEnvNum("OLLAMA_TEMPERATURE", 0),
+  ollamaTopP: getEnvNum("OLLAMA_TOP_P", 0.9),
+  ollamaRepeatPenalty: getEnvNum("OLLAMA_REPEAT_PENALTY", 1.15),
   ollamaKeepAlive: getEnv("OLLAMA_KEEP_ALIVE", "30s"),
-  llmTimeoutMs: getEnvNum("LLM_TIMEOUT_MS", 25_000),
+  llmTimeoutMs: getEnvNum("LLM_TIMEOUT_MS", 120_000),
+  llmSmallModelMode: getEnvBool("LLM_SMALL_MODEL_MODE", true),
+  llmTargetMaxPromptTokens: getEnvNum("LLM_TARGET_MAX_PROMPT_TOKENS", 1400),
+  llmTargetMaxHistoryMessages: getEnvNum("LLM_TARGET_MAX_HISTORY_MESSAGES", 6),
+  llmStrictGrounding: getEnvBool("LLM_STRICT_GROUNDING", true),
+
+  // Google Gemini
+  googleApiKey: process.env["GOOGLE_GENERATIVE_AI_API_KEY"] || "",
+
+  /** Scheduled / narrative reports (defaults to chat model if unset) */
+  ollamaReportModel: (() => {
+    const r = process.env["OLLAMA_REPORT_MODEL"];
+    if (r !== undefined && r.trim() !== "") return r.trim();
+    return getEnv("OLLAMA_MODEL", "phi4-mini");
+  })(),
+  ollamaReportNumCtx: getEnvNum("OLLAMA_REPORT_NUM_CTX", 8192),
+  ollamaReportTemperature: getEnvNum("OLLAMA_REPORT_TEMPERATURE", 0),
+  ollamaReportStepTimeoutMs: getEnvNum("OLLAMA_REPORT_STEP_TIMEOUT_MS", 60_000),
+
+  /** Comma-separated report recipients; email skipped if empty */
+  reportEmailTo: getEnv("REPORT_EMAIL_TO", "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
 
   // RAG
   ragDbDir: getEnv("RAG_DB_DIR", "./data/rag"),
   embedModel: getEnv("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
-  ragTopK: getEnvNum("RAG_TOP_K", 6),
+  ragTopK: getEnvNum("RAG_TOP_K", 4),
 
   // Security
   mcpAuthToken: getEnv("MCP_AUTH_TOKEN", "dev-local-token"),
@@ -62,7 +87,10 @@ export const config = {
   enableCors: getEnvBool("ENABLE_CORS", true),
 
   // Files
-  artifactsDir: getEnv("ARTIFACTS_DIR", "./data/artifacts")
+  artifactsDir: getEnv("ARTIFACTS_DIR", "./data/artifacts"),
+
+  /** Chat: max requests per IP per minute (stricter than global default) */
+  chatRateLimitMax: getEnvNum("CHAT_RATE_LIMIT_MAX", 30)
 };
 
 if (config.nodeEnv === "production") {

@@ -1,8 +1,14 @@
 "use client";
 
 import { useState, useMemo, ChangeEvent } from "react";
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import {
+  LineChart, Line, AreaChart, Area,
+  XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+  ReferenceLine, Legend,
+} from "recharts";
+import Link from "next/link";
 import { Cpu, DocumentText } from "iconsax-reactjs";
+import { toast } from "sonner";
 
 import AppHeader from "../components/AppHeader";
 import StatCard from "../components/dashboard/StatCard";
@@ -12,49 +18,74 @@ import SensorList from "../components/dashboard/SensorList";
 
 import { useDashboard } from "../hooks/useDashboard";
 import { api } from "../lib/api";
+import { useAppContext } from "../context/AppContext";
+
+/* ── color palette ── */
+const C = {
+  accent: "#9e5a32",
+  blue: "#60a5fa",
+  purple: "#a78bfa",
+  green: "#34d399",
+  amber: "#fbbf24",
+  red: "#f87171",
+  border: "var(--border)",
+  surface: "var(--surface)",
+};
 
 export default function HomePage() {
-  const [machineId, setMachineId] = useState("machine_1");
-  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
-  
+  const { machineId, setMachineId, isGeneratingReport, triggerReport } = useAppContext();
   const { items, alerts, reports, history, mutateReports } = useDashboard(machineId);
 
-  const triggerReport = async () => {
-    setIsGeneratingReport(true);
-    try {
-      await api.post("/reports/trigger", { machineId });
-      setTimeout(mutateReports, 2000);
-    } finally {
-      setIsGeneratingReport(false);
-    }
-  };
+  const stats = useMemo(() => {
+    const get = (slug: string) =>
+      items.find(i => (i.slug || i.tagId) === slug);
+    return {
+      rpm: (get("EXTRUDER_RPM")?.valueNumber ?? 0).toFixed(1),
+      mpm: (get("LAMINATOR_MPM")?.valueNumber ?? 0).toFixed(1),
+      gsm: (get("GSM_ENTRY")?.valueNumber ?? 0).toFixed(1),
+      runM: (get("RUNNING_METER")?.valueNumber ?? 0).toFixed(0),
+    };
+  }, [items]);
 
   const viewReport = async (runId: string) => {
+    const tid = toast.loading("Preparing download...");
     try {
       const blob = await api.getBlob(`/reports/view/${runId}`);
       const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `report_${runId}.html`;
-      document.body.appendChild(a);
-      a.click();
+      const a = document.createElement("a");
+      a.href = url; a.download = `report_${runId}.html`;
+      document.body.appendChild(a); a.click();
       window.URL.revokeObjectURL(url);
-    } catch (err) {
-      alert("Failed to load report. It may still be generating.");
+      toast.success("Download started", { id: tid });
+    } catch (err: any) {
+      toast.error("Failed to load report", { id: tid, description: err.message || "An unexpected error occurred." });
     }
   };
 
-  const stats = useMemo(() => {
-    const temp1 = items.find(i => i.tagId === 'roller_temp_01')?.valueNumber ?? 0;
-    const temp2 = items.find(i => i.tagId === 'roller_temp_02')?.valueNumber ?? 0;
-    const speed = items.find(i => i.tagId === 'line_speed')?.valueNumber ?? 0;
-    const pressure = items.find(i => i.tagId === 'nip_pressure')?.valueNumber ?? 0;
-    return { 
-      avgTemp: ((temp1 + temp2) / 2).toFixed(1), 
-      speed: speed.toFixed(1), 
-      pressure: pressure.toFixed(2) 
-    };
-  }, [items]);
+  const triggerCsvExport = (tags: string[]) => {
+    const from = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const to = new Date().toISOString();
+    const url = `/api/proxy/metrics/production/samples?machineId=${machineId}&from=${from}&to=${to}&tags=${tags.join(",")}`;
+    
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `data-${machineId}-${new Date().getTime()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast.success(`Exporting ${tags.length} tags (last 24h)`);
+  };
+
+  const emailBadge = (m: any) => {
+    if (!m || typeof m !== "object") return null;
+    if (m.emailSent === true) {
+      return <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "color-mix(in srgb, #22c55e 15%, transparent)", color: "#16a34a" }}>Emailed</span>;
+    }
+    if (m.emailError) {
+      return <span title={String(m.emailError)} style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "color-mix(in srgb, #f87171 15%, transparent)", color: "#b91c1c" }}>Email failed</span>;
+    }
+    return null;
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)" }}>
@@ -63,128 +94,235 @@ export default function HomePage() {
         subtitle="Operational Monitoring & Reporting"
         icon={<Cpu size={14} color="var(--text-muted)" />}
         rightSlot={
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, paddingRight: 10, borderRight: "1px solid var(--border)" }}>
-              <span style={{ fontSize: 11, color: "var(--text-faint)" }}>Asset</span>
-              <input
-                className="rvl-input"
-                value={machineId}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <div className="rvl-header-asset" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 11, color: "var(--text-faint)", whiteSpace: "nowrap" }}>Asset</span>
+              <input className="rvl-input" value={machineId}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setMachineId(e.currentTarget.value)}
-                style={{ width: 90 }}
-              />
+                style={{ width: 110, minWidth: 80 }} />
             </div>
-            <button onClick={triggerReport} disabled={isGeneratingReport} className="rvl-btn-primary" style={{ background: "var(--accent)", color: "#fff", border: "none" }}>
+            <button onClick={triggerReport} disabled={isGeneratingReport}
+              className="rvl-btn-primary" style={{ background: "var(--accent)", color: "#fff", border: "none", whiteSpace: "nowrap" }}>
               <DocumentText size={14} />
-              {isGeneratingReport ? "Processing..." : "Run Report"}
+              {isGeneratingReport ? "Processing…" : "Run Report"}
             </button>
           </div>
         }
       />
 
-      <main style={{ maxWidth: 1200, margin: "0 auto", padding: "32px 20px" }}>
-        
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 20, marginBottom: 32 }}>
-          <StatCard title="Thermal Avg" value={stats.avgTemp} unit="°C" />
-          <StatCard title="Throughput" value={stats.speed} unit="m/m" />
-          <StatCard title="Nip Load" value={stats.pressure} unit="bar" />
-          <StatCard 
-            title="Alerts Level" 
-            value={alerts.length} 
-            unit={alerts.some(a => a.severity === 'critical') ? "Critical" : "Nominal"} 
-            status={alerts.some(a => a.severity === 'critical') ? 'critical' : alerts.length > 0 ? 'warning' : 'good'} 
+      <main style={{ maxWidth: 1320, margin: "0 auto", padding: "clamp(16px, 4vw, 24px) clamp(12px, 3vw, 20px) 48px" }}>
+
+        {/* ── KPI strip ── */}
+        <div className="rvl-grid-kpi">
+          <StatCard title="Extruder RPM" value={stats.rpm} unit="RPM" />
+          <StatCard title="Line Speed" value={stats.mpm} unit="m/min" />
+          <StatCard title="GSM" value={stats.gsm} unit="g/m²" />
+          <StatCard
+            title="Open Alerts"
+            value={alerts.length}
+            unit={alerts.some(a => a.severity === "critical") ? "Critical" : "Normal"}
+            status={alerts.some(a => a.severity === "critical") ? "critical" : alerts.length > 0 ? "warning" : "good"}
           />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 32 }}>
-          
-          <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
-            <ChartCard title="Thermal Profiles" subtitle="Live Temperature Monitoring">
-              <ResponsiveContainer width="100%" height={280}>
-                <AreaChart data={history} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="4 4" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="t" hide />
-                  <YAxis fontSize={9} stroke="var(--text-faint)" axisLine={false} tickLine={false} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Area type="monotone" dataKey="roller_temp_01" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.03} strokeWidth={1.2} />
-                  <Area type="monotone" dataKey="roller_temp_02" stroke="var(--text-muted)" fill="transparent" strokeWidth={1} strokeDasharray="4 2" />
-                </AreaChart>
+        {/* ── Main grid: left charts | right sidebar ── */}
+        <div className="rvl-grid-main">
+
+          {/* ── LEFT: charts ── */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+
+            {/* Row 1: Speed trend (full width) */}
+            <ChartCard
+              title="Extruder RPM & Line Speed"
+              subtitle="Dual-axis · last 40 samples · refreshes every 5 s"
+              onExport={() => triggerCsvExport(["EXTRUDER_RPM", "LAMINATOR_MPM"])}
+            >
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={history} margin={{ top: 4, right: 16, left: -10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                  <XAxis dataKey="t" tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+                  <YAxis yAxisId="rpm" orientation="left" tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickLine={false} axisLine={false} width={32} unit=" RPM" />
+                  <YAxis yAxisId="mpm" orientation="right" tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickLine={false} axisLine={false} width={42} unit=" m/m" />
+                  <Tooltip content={<ChartTip units={{ EXTRUDER_RPM: "RPM", LAMINATOR_MPM: "m/min" }} />} />
+                  <Legend iconType="circle" iconSize={6} wrapperStyle={{ fontSize: 10, paddingTop: 6 }} />
+                  <Line yAxisId="rpm" type="monotone" dataKey="EXTRUDER_RPM" name="Extruder RPM" stroke={C.accent} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                  <Line yAxisId="mpm" type="monotone" dataKey="LAMINATOR_MPM" name="Line Speed" stroke={C.blue} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                </LineChart>
               </ResponsiveContainer>
             </ChartCard>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-              <ChartCard title="Pressure Load">
-                <ResponsiveContainer width="100%" height={140}>
-                  <AreaChart data={history}>
-                    <Tooltip content={<CustomTooltip />} />
-                    <Area type="step" dataKey="nip_pressure" stroke="var(--text-muted)" fill="var(--surface-2)" strokeWidth={1} />
+            {/* Row 2: three small charts */}
+            <div className="rvl-grid-3col">
+
+              <ChartCard title="Extruder Current" subtitle="A" onExport={() => triggerCsvExport(["EXTRUDER_AMP"])}>
+                <ResponsiveContainer width="100%" height={130}>
+                  <AreaChart data={history} margin={{ top: 4, right: 4, left: -22, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                    <XAxis dataKey="t" hide />
+                    <YAxis tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTip units={{ EXTRUDER_AMP: "A" }} />} />
+                    <Area type="monotone" dataKey="EXTRUDER_AMP" name="Ext A" stroke={C.accent} fill={C.accent} fillOpacity={0.1} strokeWidth={1.5} dot={false} isAnimationActive={false} />
                   </AreaChart>
                 </ResponsiveContainer>
               </ChartCard>
-              <ChartCard title="Motion Stream">
-                <ResponsiveContainer width="100%" height={140}>
-                  <AreaChart data={history}>
-                    <Tooltip content={<CustomTooltip />} />
-                    <Area type="monotone" dataKey="line_speed" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.05} strokeWidth={1} />
+
+              <ChartCard title="Laminator Current" subtitle="A" onExport={() => triggerCsvExport(["LAMINATOR_AMP"])}>
+                <ResponsiveContainer width="100%" height={130}>
+                  <AreaChart data={history} margin={{ top: 4, right: 4, left: -22, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                    <XAxis dataKey="t" hide />
+                    <YAxis tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTip units={{ LAMINATOR_AMP: "A" }} />} />
+                    <Area type="monotone" dataKey="LAMINATOR_AMP" name="Lam A" stroke={C.blue} fill={C.blue} fillOpacity={0.1} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              <ChartCard title="Winder Current" subtitle="A" onExport={() => triggerCsvExport(["WINDER_AMP"])}>
+                <ResponsiveContainer width="100%" height={130}>
+                  <AreaChart data={history} margin={{ top: 4, right: 4, left: -22, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                    <XAxis dataKey="t" hide />
+                    <YAxis tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTip units={{ WINDER_AMP: "A" }} />} />
+                    <Area type="monotone" dataKey="WINDER_AMP" name="Win A" stroke={C.purple} fill={C.purple} fillOpacity={0.1} strokeWidth={1.5} dot={false} isAnimationActive={false} />
                   </AreaChart>
                 </ResponsiveContainer>
               </ChartCard>
             </div>
-            
+
+            {/* Row 3: two medium charts */}
+            <div className="rvl-grid-2col">
+
+              <ChartCard title="Winder Tension" subtitle="% — amber line = 80% warn" onExport={() => triggerCsvExport(["WINDER_TENSION_PCT"])}>
+                <ResponsiveContainer width="100%" height={160}>
+                  <AreaChart data={history} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                    <XAxis dataKey="t" hide />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTip units={{ WINDER_TENSION_PCT: "%" }} />} />
+                    <ReferenceLine y={80} stroke={C.amber} strokeDasharray="4 2" strokeWidth={1} label={{ value: "warn", position: "right", fontSize: 8, fill: C.amber }} />
+                    <Area type="monotone" dataKey="WINDER_TENSION_PCT" name="Tension %" stroke={C.purple} fill={C.purple} fillOpacity={0.1} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              <ChartCard title="Unwinder Tension" subtitle="Set vs. PV · Newtons" onExport={() => triggerCsvExport(["UW_SET_TENSION", "UW_PV_TENSION"])}>
+                <ResponsiveContainer width="100%" height={160}>
+                  <LineChart data={history} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                    <XAxis dataKey="t" hide />
+                    <YAxis tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTip units={{ UW_SET_TENSION: "N", UW_PV_TENSION: "N" }} />} />
+                    <Legend iconType="circle" iconSize={6} wrapperStyle={{ fontSize: 9, paddingTop: 4 }} />
+                    <Line type="monotone" dataKey="UW_SET_TENSION" name="Set" stroke={C.green} strokeWidth={1.5} dot={false} isAnimationActive={false} strokeDasharray="5 3" />
+                    <Line type="monotone" dataKey="UW_PV_TENSION" name="PV" stroke={C.accent} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+            </div>
+
+            {/* Row 4: production metrics */}
+            <div className="rvl-grid-2col">
+
+              <ChartCard title="Running Meters" subtitle="m — cumulative production" onExport={() => triggerCsvExport(["RUNNING_METER"])}>
+                <ResponsiveContainer width="100%" height={140}>
+                  <AreaChart data={history} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                    <XAxis dataKey="t" hide />
+                    <YAxis tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTip units={{ RUNNING_METER: "m" }} />} />
+                    <Area type="monotone" dataKey="RUNNING_METER" name="Running m" stroke={C.green} fill={C.green} fillOpacity={0.1} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              <ChartCard title="GSM Entry" subtitle="g/m² — fabric weight" onExport={() => triggerCsvExport(["GSM_ENTRY"])}>
+                <ResponsiveContainer width="100%" height={140}>
+                  <AreaChart data={history} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                    <XAxis dataKey="t" hide />
+                    <YAxis tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTip units={{ GSM_ENTRY: "g/m²" }} />} />
+                    <Area type="monotone" dataKey="GSM_ENTRY" name="GSM" stroke={C.amber} fill={C.amber} fillOpacity={0.1} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </ChartCard>
+            </div>
+
+            {/* Reports */}
             <div>
-               <h3 style={{ fontSize: 12, fontWeight: 500, color: "var(--text-muted)", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
-                <DocumentText size={14} /> Recent Reports
+              <h3 style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 7, justifyContent: "space-between", flexWrap: "wrap" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+                  <DocumentText size={13} /> Recent Reports
+                </span>
+                <Link href={`/reports?machineId=${encodeURIComponent(machineId)}`} style={{ fontSize: 11, fontWeight: 500, color: "var(--accent)", textDecoration: "none" }}>
+                  View all →
+                </Link>
               </h3>
               <div className="rvl-card" style={{ padding: 0 }}>
                 {reports.length === 0 ? (
-                  <div style={{ padding: 20, textAlign: "center", color: "var(--text-faint)", fontSize: 12 }}>No reports generated yet. Click "Run Report" to start.</div>
-                ) : (
-                  reports.map(report => (
-                    <div key={report.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid var(--border-subtle)" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: report.status === 'succeeded' ? '#10b981' : report.status === 'failed' ? '#ff4d4f' : '#3b82f6' }} />
-                        <span style={{ fontSize: 12, fontWeight: 500 }}>{new Date(report.createdAt).toLocaleString()}</span>
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                        <span style={{ fontSize: 11, color: "var(--text-faint)" }}>{report.metrics?.alerts ?? 0} Alerts</span>
-                        <span style={{ fontSize: 11, background: "var(--surface-2)", padding: "2px 8px", borderRadius: 4 }}>{report.status}</span>
-                        {report.status === 'succeeded' && (
-                          <button onClick={() => viewReport(report.id)} style={{ fontSize: 11, color: "var(--accent)", border: "none", background: "none", cursor: "pointer", fontWeight: 500 }}>
-                            View
-                          </button>
-                        )}
-                      </div>
+                  <div style={{ padding: "18px 16px", textAlign: "center", color: "var(--text-faint)", fontSize: 12 }}>
+                    No reports yet. Click "Run Report" to generate one.
+                  </div>
+                ) : reports.map(r => (
+                  <div key={r.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid var(--border-subtle)", flexWrap: "wrap", gap: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                      <div style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, background: r.status === "succeeded" ? C.green : r.status === "failed" ? C.red : C.blue }} />
+                      <span style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{new Date(r.createdAt).toLocaleString()}</span>
                     </div>
-                  ))
-                )}
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                      <span className="rvl-hide-mobile" style={{ fontSize: 11, color: "var(--text-faint)" }}>{r.metrics?.alerts ?? 0} alerts</span>
+                      {emailBadge(r.metrics)}
+                      <span style={{ fontSize: 10, background: "var(--surface-2)", padding: "2px 7px", borderRadius: 4 }}>{r.status}</span>
+                      {r.status === "succeeded" && (
+                        <div style={{ display: "flex", gap: 12 }}>
+                          <Link href={`/reports/${encodeURIComponent(r.id)}?machineId=${encodeURIComponent(machineId)}`} style={{ fontSize: 11, color: "var(--accent)", fontWeight: 500, textDecoration: "none" }}>
+                            Open
+                          </Link>
+                          <button type="button" onClick={() => viewReport(r.id)} style={{ fontSize: 11, color: "var(--text-muted)", border: "none", background: "none", cursor: "pointer", fontWeight: 500 }}>Download</button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+          {/* ── RIGHT: alerts + sensors ── */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
             <AlertFeed alerts={alerts} />
-            <SensorList items={items} />
+            <div className="rvl-card" style={{ padding: "14px 16px" }}>
+              <SensorList items={items} />
+            </div>
           </div>
-
         </div>
       </main>
     </div>
   );
 }
 
-function CustomTooltip({ active, payload, label }: any) {
-  if (active && payload && payload.length) {
-    return (
-      <div style={{ background: "var(--surface)", border: "1px solid var(--border)", padding: "10px", borderRadius: 8, boxShadow: "var(--shadow)" }}>
-        <p style={{ fontSize: 10, color: "var(--text-faint)", margin: "0 0 8px" }}>{label}</p>
-        {payload.map((p: any) => (
-          <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-            <div style={{ width: 8, height: 8, borderRadius: 2, background: p.color }} />
-            <span style={{ fontSize: 11, fontWeight: 600 }}>{p.name}:</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: p.color }}>{p.value.toFixed(2)}</span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-  return null;
+/* ── Shared tooltip ── */
+function ChartTip({ active, payload, label, units = {} }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{
+      background: "var(--surface)", border: "1px solid var(--border)",
+      padding: "8px 12px", borderRadius: 8,
+      boxShadow: "0 4px 20px rgba(0,0,0,.12)", minWidth: 110
+    }}>
+      {label && <p style={{ fontSize: 9.5, color: "var(--text-faint)", margin: "0 0 5px" }}>{label}</p>}
+      {payload.map((p: any) => (
+        <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 2 }}>
+          <div style={{ width: 6, height: 6, borderRadius: 2, background: p.color, flexShrink: 0 }} />
+          <span style={{ fontSize: 11, color: "var(--text-muted)", flex: 1 }}>{p.name}</span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: p.color }}>
+            {typeof p.value === "number" ? p.value.toFixed(1) : p.value}
+            {units[p.dataKey] ? <span style={{ fontSize: 9, opacity: .7, marginLeft: 2 }}>{units[p.dataKey]}</span> : null}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }

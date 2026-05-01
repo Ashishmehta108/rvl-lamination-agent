@@ -3,14 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 const BACKEND_URL = process.env.BACKEND_URL || "http://127.0.0.1:7000";
 const API_TOKEN = process.env.API_AUTH_TOKEN || "dev-local-token";
 
-export async function GET(req: NextRequest, { params }: { params: { path: string[] } }) {
-  const resolvedParams = await params;
-  return handleRequest(req, resolvedParams.path);
+export async function GET(req: NextRequest, context: { params: Promise<{ path: string[] }> }) {
+  const resolvedParams = await context.params;
+  return handleRequest(req, resolvedParams.path ?? []);
 }
 
-export async function POST(req: NextRequest, { params }: { params: { path: string[] } }) {
-  const resolvedParams = await params;
-  return handleRequest(req, resolvedParams.path);
+export async function POST(req: NextRequest, context: { params: Promise<{ path: string[] }> }) {
+  const resolvedParams = await context.params;
+  return handleRequest(req, resolvedParams.path ?? []);
 }
 
 async function handleRequest(req: NextRequest, pathSegments: string[]) {
@@ -27,6 +27,7 @@ async function handleRequest(req: NextRequest, pathSegments: string[]) {
     const options: RequestInit = {
       method: req.method,
       headers,
+      cache: "no-store",
       // @ts-ignore - duplex is needed for streaming bodies in some versions
       duplex: 'half'
     };
@@ -42,6 +43,9 @@ async function handleRequest(req: NextRequest, pathSegments: string[]) {
       status: response.status,
       headers: {
         "Content-Type": response.headers.get("Content-Type") || "application/json",
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        Pragma: "no-cache",
+        Expires: "0"
       },
     });
   } catch (error) {

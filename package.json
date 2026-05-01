@@ -21,7 +21,8 @@
     "db:mongo:generate": "npm run prisma:generate -w packages/db-mongo",
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:stop": "pm2 stop rvl-backend || true",
-    "pm2:logs": "pm2 logs rvl-backend"
+    "pm2:logs": "pm2 logs rvl-backend",
+    "sim": "npm run simulate -w apps/backend"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
@@ -31,5 +32,14 @@
     "pm2": "^6.0.10",
     "typescript": "^5.8.3",
     "wait-on": "^9.0.5"
+  },
+  "dependencies": {
+    "@google/genai": "^1.50.1",
+    "fuse.js": "^7.3.0",
+    "react-markdown": "^10.1.0",
+    "readline": "^1.3.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "swr": "^2.4.1"
   }
 }

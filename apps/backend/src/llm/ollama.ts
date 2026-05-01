@@ -50,21 +50,75 @@ export async function embedText(text: string): Promise<number[]> {
 }
 
 export async function chatOnce(messages: LlmMessage[]): Promise<string> {
+  return chatOnceWithModel(messages, config.ollamaModel, {
+    numCtx: config.ollamaNumCtx,
+    temperature: config.ollamaTemperature,
+    topP: config.ollamaTopP,
+    repeatPenalty: config.ollamaRepeatPenalty
+  });
+}
+
+export async function chatOnceWithModel(
+  messages: LlmMessage[],
+  model: string,
+  options?: Partial<{
+    numCtx: number;
+    temperature: number;
+    topP: number;
+    repeatPenalty: number;
+    timeoutMs: number;
+  }>
+): Promise<string> {
   const client = getOllamaClient();
+  const numCtx = options?.numCtx ?? config.ollamaNumCtx;
+  const temperature = options?.temperature ?? config.ollamaTemperature;
+  const topP = options?.topP ?? config.ollamaTopP;
+  const repeatPenalty = options?.repeatPenalty ?? config.ollamaRepeatPenalty;
+
   const out = await withTimeout(
     client.chat({
-      model: config.ollamaModel,
+      model,
       messages,
       stream: false,
       options: {
-        temperature: config.ollamaTemperature,
-        num_ctx: config.ollamaNumCtx
+        temperature,
+        top_p: topP,
+        repeat_penalty: repeatPenalty,
+        num_ctx: numCtx
       },
       keep_alive: config.ollamaKeepAlive
     }),
-    config.llmTimeoutMs,
+    options?.timeoutMs ?? config.llmTimeoutMs,
     "ollama_chat"
   );
   return out.message.content;
+}
+
+let ollamaTagsCache: { at: number; names: string[] } | null = null;
+const OLLAMA_TAGS_TTL_MS = 60_000;
+
+/** Cached model names from Ollama /api/tags (for assistant "which models" questions only). */
+export async function getCachedOllamaModelNames(): Promise<string[]> {
+  const now = Date.now();
+  if (ollamaTagsCache && now - ollamaTagsCache.at < OLLAMA_TAGS_TTL_MS) {
+    return ollamaTagsCache.names;
+  }
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 2000);
+    const res = await fetch(`${config.ollamaBaseUrl}/api/tags`, { signal: controller.signal });
+    clearTimeout(t);
+    if (!res.ok) {
+      ollamaTagsCache = { at: now, names: [] };
+      return [];
+    }
+    const body = (await res.json()) as { models?: { name?: string }[] };
+    const names = (body.models ?? []).map((m) => m.name).filter((n): n is string => Boolean(n));
+    ollamaTagsCache = { at: now, names };
+    return names;
+  } catch {
+    ollamaTagsCache = { at: now, names: [] };
+    return [];
+  }
 }
 

@@ -18,6 +18,10 @@ type Def = {
   max?: number | null;
   maxRatePerSec?: number | null;
   sampleEveryMs?: number | null;
+  warnHigh?: number | null;
+  warnLow?: number | null;
+  alarmHigh?: number | null;
+  alarmLow?: number | null;
 };
 
 const defsCache = new Map<
@@ -39,7 +43,25 @@ async function getDefsForProfile(args: {
     .find({ machineId: args.machineId, machineRevision: args.machineRevision })
     .toArray()) as Def[];
   const defsByTagId = new Map(defs.map((d) => [d.tagId, d]));
-  const defsBySlug = new Map(defs.map((d) => [d.slug, d]));
+  const defsBySlug = new Map<string, Def>();
+  const score = (d: Def) => {
+    // Prefer definitions that have thresholds and bounds (seeded defs),
+    // then prefer tagId==slug, then most metadata overall.
+    let s = 0;
+    if (d.alarmHigh != null || d.alarmLow != null || d.warnHigh != null || d.warnLow != null) s += 50;
+    if (d.min != null || d.max != null) s += 10;
+    if (d.tagId === d.slug) s += 5;
+    if (d.deadband != null) s += 1;
+    if (d.sampleEveryMs != null) s += 1;
+    return s;
+  };
+  for (const d of defs) {
+    if (!d?.slug) continue;
+    const prev = defsBySlug.get(d.slug);
+    if (!prev || score(d) > score(prev)) {
+      defsBySlug.set(d.slug, d);
+    }
+  }
   const next = { expiresAt: args.nowMs + 30_000, defsByTagId, defsBySlug };
   defsCache.set(key, next);
   return next;
@@ -168,6 +190,42 @@ export async function cleanAndPersistBatch(batch: IngestBatch, logger: any): Pro
       }
     );
     if (updateRes.modifiedCount === 0) {
+      // Some simulators restart seq from 1 on process restart. If timestamps move
+      // forward and the seq looks like a fresh counter, accept the reset.
+      const lastSeq = Number(ingestState.lastSeq ?? -1);
+      const incomingSeq = Number(batch.seq ?? -1);
+      const lastSentAt = ingestState.lastSentAt ? new Date(ingestState.lastSentAt) : null;
+      const incomingSentAt = batch.sentAt instanceof Date ? batch.sentAt : new Date(batch.sentAt as any);
+      const newerStream = lastSentAt ? incomingSentAt.getTime() > lastSentAt.getTime() + 5000 : true;
+      const looksLikeSeqReset =
+        Number.isFinite(lastSeq) &&
+        Number.isFinite(incomingSeq) &&
+        incomingSeq >= 0 &&
+        incomingSeq < lastSeq &&
+        incomingSeq <= 100 &&
+        lastSeq - incomingSeq >= 10;
+
+      if (looksLikeSeqReset && newerStream) {
+        await machineIngestStates.updateOne(
+          { _id: ingestStateId },
+          {
+            $set: {
+              lastSeq: incomingSeq,
+              lastSentAt: batch.sentAt,
+              updatedAt: new Date()
+            }
+          }
+        );
+        logger.warn(
+          {
+            machineId: batch.machineId,
+            machineRevision: batch.machineRevision,
+            prevSeq: ingestState.lastSeq ?? null,
+            resetSeq: incomingSeq
+          },
+          "ingest_seq_reset_accepted"
+        );
+      } else {
       logger.warn(
         { machineId: batch.machineId, machineRevision: batch.machineRevision, seq: batch.seq, lastSeq: ingestState.lastSeq ?? null },
         "stale_ingest_seq_batch_ignored"
@@ -176,6 +234,7 @@ export async function cleanAndPersistBatch(batch: IngestBatch, logger: any): Pro
         perTag.push({ tagId: t.tagId, tagSlug: t.tagSlug, status: "rejected", reason: "stale_seq" });
       }
       return { accepted: 0, rejected: batch.tags.length, perTag };
+      }
     }
   }
 

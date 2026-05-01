@@ -1,0 +1,2 @@
+CREATE INDEX "alert_events_machine_starts_idx" ON "alert_events" USING btree ("machine_id","starts_at");--> statement-breakpoint
+CREATE INDEX "report_runs_machine_created_idx" ON "report_runs" USING btree ("machine_id","created_at");

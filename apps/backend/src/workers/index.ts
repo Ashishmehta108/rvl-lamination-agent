@@ -3,6 +3,7 @@ import { tryGetBoss } from "../queue/boss.js";
 import { registerAlertDetectionWorker } from "./alertDetection.js";
 import { registerDeliveryWorker } from "./deliveryWorker.js";
 import { registerReportRunner } from "./reportRunner.js";
+import { registerReportEmailWorker } from "./reportEmailWorker.js";
 import { startReportScheduler } from "./reportScheduler.js";
 import { registerMlWorker } from "./mlWorker.js";
 import { config } from "../config.js";
@@ -41,6 +42,7 @@ export async function startWorkers({ logger }: { logger: any }) {
   await registerAlertDetectionWorker(boss, logger);
   await registerDeliveryWorker(boss, logger);
   await registerReportRunner(boss, logger);
+  await registerReportEmailWorker(boss, logger);
   await registerMlWorker(boss, logger);
   await startReportScheduler(boss, logger);
 

@@ -8,6 +8,13 @@
       "when": 1776777691776,
       "tag": "0000_large_mysterio",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777015500992,
+      "tag": "0001_large_excalibur",
+      "breakpoints": true
     }
   ]
 }

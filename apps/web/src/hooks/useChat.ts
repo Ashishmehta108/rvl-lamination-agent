@@ -1,20 +1,48 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "../lib/api";
+import { toast } from "sonner";
 
 const STORE_KEY = "rvl-conversations";
 
 export type Role = "user" | "assistant";
+export interface ToolStep {
+  tool: string;
+  label: string;
+  durationMs: number;
+}
+
+export interface ContextBlock {
+  source: string;
+  preview: string;
+}
+
+export interface FindCandidateChip {
+  tagId: string;
+  slug: string;
+  name: string;
+  unit: string | null;
+  score: number;
+}
+
 export interface Message {
   role: Role;
   content: string;
   citations?: { index: number; chunkId: string; sourceUri: string | null }[];
+  steps?: ToolStep[];
+  grounded?: boolean;
   error?: boolean;
+  contextBlocks?: ContextBlock[];
+  liveTagCount?: number;
+  /** Tag candidates from server-side find_tags (for UI chips). */
+  findCandidates?: FindCandidateChip[];
 }
 
 export interface Conversation {
   id: string;
   title: string;
   machineId: string;
+  /** Optional tag ids always injected into assistant context */
+  tagIds?: string[];
   messages: Message[];
   createdAt: number;
   updatedAt: number;
@@ -53,7 +81,7 @@ export function useChat() {
     const c: Conversation = {
       id,
       title: "New conversation",
-      machineId: "machine_1",
+      machineId: "lamination-01",
       messages: [],
       createdAt: Date.now(),
       updatedAt: Date.now()
@@ -102,21 +130,41 @@ export function useChat() {
 
     try {
       // Use the current state or a fallback
-      const data = await api.post<{ answer: string; citations: any[] }>(`/chat`, {
-        machineId: active?.machineId || "machine_1",
-        messages: [...(active?.messages || []), userMsg].filter(m => !m.error).map(m => ({ role: m.role, content: m.content }))
-      });
+      const conv = conversations.find(c => c.id === convId);
+      const history = [...(conv?.messages ?? []), userMsg].filter(m => !m.error).map(m => ({ role: m.role, content: m.content }));
+      const body: Record<string, unknown> = {
+        machineId: conv?.machineId || "lamination-01",
+        messages: history
+      };
+      const tid = conv?.tagIds?.filter(Boolean);
+      if (tid && tid.length) body.tagIds = tid;
+
+      const data = await api.post<{
+        answer: string;
+        citations: any[];
+        grounded: boolean;
+        steps?: ToolStep[];
+        contextBlocks?: ContextBlock[];
+        liveTagCount?: number;
+        findCandidates?: FindCandidateChip[];
+      }>(`/chat`, body);
 
       const assistantMsg: Message = {
         role: "assistant",
         content: data.answer,
-        citations: data.citations
+        citations: data.citations,
+        steps: data.steps,
+        grounded: data.grounded,
+        contextBlocks: data.contextBlocks,
+        liveTagCount: data.liveTagCount,
+        findCandidates: data.findCandidates
       };
 
       setConversations(prev => prev.map(c => 
         c.id === convId ? { ...c, messages: [...c.messages, assistantMsg], updatedAt: Date.now() } : c
       ));
     } catch (e: any) {
+      toast.error("Assistant failed to respond", { description: e.message || "An unexpected error occurred." });
       const errorMsg: Message = {
         role: "assistant",
         content: `⚠ ${e.message}`,

@@ -1,0 +1,57 @@
+<alarms>
+<alarm eventBuffer="AlarmBuffer1" logToEventArchive="true" eventType="14" subType="1" storeAlarmInfo="true">
+<name>EMERGENCY STOP ACTIVE</name>
+<source>EMG_STOP_BIT_M9</source>
+<alarmType>bitMaskAlarm</alarmType>
+</alarm>
+<alarm eventBuffer="AlarmBuffer1" logToEventArchive="true" eventType="14" subType="1" storeAlarmInfo="true">
+<name>EXTRUDER SCREW DRIVE FAULT</name>
+<source>EX_1_SC_1_FAULT_M12</source>
+<alarmType>bitMaskAlarm</alarmType>
+</alarm>
+<alarm eventBuffer="AlarmBuffer1" logToEventArchive="true" eventType="14" subType="1" storeAlarmInfo="true">
+<name>LAMINATOR DRIVE FAULT</name>
+<source>LAMINATOR_1_DRIVE_FAULT_M13</source>
+<alarmType>bitMaskAlarm</alarmType>
+</alarm>
+<alarm eventBuffer="AlarmBuffer1" logToEventArchive="true" eventType="14" subType="1" storeAlarmInfo="true">
+<name>WINDER DRIVE FAULT</name>
+<source>WINDER_DRIVE_FAULT_M14</source>
+<alarmType>bitMaskAlarm</alarmType>
+</alarm>
+<alarm eventBuffer="AlarmBuffer1" logToEventArchive="true" eventType="14" subType="1" storeAlarmInfo="true">
+<name>EXTRUDER FWD_REV ELR FAULT</name>
+<source>X10</source>
+<alarmType>bitMaskAlarm</alarmType>
+</alarm>
+<alarm eventBuffer="AlarmBuffer1" logToEventArchive="true" eventType="14" subType="1" storeAlarmInfo="true">
+<name>LAMINATOR UP_DOWN ELR FAULT</name>
+<source>X11</source>
+<alarmType>bitMaskAlarm</alarmType>
+</alarm>
+<alarm eventBuffer="AlarmBuffer1" logToEventArchive="true" eventType="14" subType="1" storeAlarmInfo="true">
+<name>TRIM BLOWER FAULT</name>
+<source>X12</source>
+<alarmType>bitMaskAlarm</alarmType>
+</alarm>
+<alarm eventBuffer="AlarmBuffer1" logToEventArchive="true" eventType="14" subType="1" storeAlarmInfo="true">
+<name>UNWINDER WEB ALIGNER FAULT</name>
+<source>X13</source>
+<alarmType>bitMaskAlarm</alarmType>
+</alarm>
+<alarm eventBuffer="AlarmBuffer1" logToEventArchive="true" eventType="14" subType="1" storeAlarmInfo="true">
+<name>AIR PRESSRUE LOW</name>
+<source>X5</source>
+<alarmType>bitMaskAlarm</alarmType>
+</alarm>
+<alarm eventBuffer="AlarmBuffer1" logToEventArchive="true" eventType="14" subType="1" storeAlarmInfo="true">
+<name>PLC ERROR</name>
+<source>PLC_ERROR_IND_M8004</source>
+<alarmType>bitMaskAlarm</alarmType>
+</alarm>
+<alarm eventBuffer="AlarmBuffer1" logToEventArchive="true" eventType="14" subType="1" storeAlarmInfo="true">
+<name>HEATING PANEL MCCB TRIP</name>
+<source>X37</source>
+<alarmType>bitMaskAlarm</alarmType>
+</alarm>
+</alarms>

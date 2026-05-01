@@ -8,6 +8,7 @@
 [data-theme="light"] {
   --bg:           #f9f8f6;
   --surface:      #ffffff;
+  --surface-rgb:  255, 255, 255;
   --surface-2:    #f1efeb;
   --surface-3:    #e8e6e1;
   --border:       #e5e2dd;
@@ -24,6 +25,7 @@
 [data-theme="dark"] {
   --bg:           #131210;
   --surface:      #1c1b18;
+  --surface-rgb:  28, 27, 24;
   --surface-2:    #262421;
   --surface-3:    #2f2d29;
   --border:       #2d2b27;
@@ -44,19 +46,22 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
-  font-size: 13px; /* Slightly smaller for precision look */
+  font-size: 13px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   letter-spacing: -0.01em;
+  overflow-x: hidden;
+  width: 100%;
 }
 
 /* ── Components ─────────────────────────────────────────────────────────── */
 .rvl-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
   box-shadow: var(--shadow);
   transition: border-color .15s ease;
+  overflow: hidden;
 }
 
 .rvl-btn-primary {
@@ -94,12 +99,19 @@ body {
   border-color: var(--accent);
 }
 
+.rvl-glass {
+  background: rgba(var(--surface-rgb), 0.75) !important;
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+}
+
 /* ── Transitions ────────────────────────────────────────────────────────── */
 * {
   transition-property: background-color, border-color, color;
   transition-duration: .2s;
   transition-timing-function: ease;
 }
+<<<<<<< HEAD
 
 /* ── Chat-Specific Styles ──────────────────────────────────────────────── */
 
@@ -187,4 +199,120 @@ body {
 .rvl-citation:hover {
   background: var(--accent-faint) !important;
   border-color: var(--accent) !important;
+=======
+/* ── Live dot ───────────────────────────────────────────────────────────── */
+.rvl-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 0 rgba(34,197,94,.5);
+  animation: rvl-pulse 2s ease-in-out infinite;
+}
+
+@keyframes rvl-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(34,197,94,.5); }
+  70%  { box-shadow: 0 0 0 5px rgba(34,197,94,0); }
+  100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
+}
+
+/* ── Scrollbar — hidden but functional ──────────────────────────────────── */
+.rvl-scroll-hidden {
+  overflow-y: auto;
+  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style: none;     /* IE */
+}
+.rvl-scroll-hidden::-webkit-scrollbar { display: none; } /* Chrome/Safari */
+
+/* ── Value flash animation ───────────────────────────────────────────────── */
+@keyframes rvl-flash {
+  0%   { color: var(--accent); }
+  100% { color: inherit; }
+}
+.rvl-flash { animation: rvl-flash 0.6s ease; }
+
+/* ── Responsive layout helpers ───────────────────────────────────────────── */
+.rvl-grid-kpi {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.rvl-grid-main {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 24px;
+}
+
+.rvl-grid-3col {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.rvl-grid-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 1024px) {
+  .rvl-grid-main { grid-template-columns: 1fr; }
+  .rvl-grid-3col { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 768px) {
+  .rvl-grid-kpi { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .rvl-grid-3col { grid-template-columns: 1fr; }
+  .rvl-grid-2col { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 640px) {
+  main { padding: 16px 12px 40px !important; }
+  .rvl-hide-mobile { display: none !important; }
+  .rvl-show-mobile-flex { display: flex !important; }
+  
+  /* Table container utility */
+  .rvl-table-responsive {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (max-width: 480px) {
+  .rvl-grid-kpi { grid-template-columns: 1fr; }
+}
+
+/* ── Sensor card layout ───────────────────────────────────────────────────── */
+/* Desktop: transparent pass-through — rows render as plain list rows        */
+.rvl-sensor-grid { display: contents; }
+
+.rvl-sensor-card {
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 5px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+@media (max-width: 640px) {
+  .rvl-sensor-grid {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .rvl-sensor-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .rvl-sensor-cat-header { display: none; }
+>>>>>>> 02e08f3b3b29dbb0b5a0b41abe1bbec91470b0ad
 }

@@ -16,7 +16,12 @@ async function handleResponse<T>(res: Response): Promise<T> {
 export const api = {
   async get<T>(path: string, params?: Record<string, string>): Promise<T> {
     const search = params ? `?${new URLSearchParams(params).toString()}` : "";
-    const res = await fetch(`/api/proxy${path}${search}`);
+    const res = await fetch(`/api/proxy${path}${search}`, {
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache"
+      }
+    });
     return handleResponse<T>(res);
   },
 
@@ -30,8 +35,21 @@ export const api = {
   },
 
   async getBlob(path: string): Promise<Blob> {
-    const res = await fetch(`/api/proxy${path}`);
+    const res = await fetch(`/api/proxy${path}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`Failed to fetch blob: ${res.status}`);
     return res.blob();
-  }
+  },
+
+  async getText(path: string, params?: Record<string, string>): Promise<string> {
+    const search = params ? `?${new URLSearchParams(params).toString()}` : "";
+    const res = await fetch(`/api/proxy${path}${search}`, {
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache" },
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, (data as any).error || `HTTP ${res.status}`, data);
+    }
+    return res.text();
+  },
 };
