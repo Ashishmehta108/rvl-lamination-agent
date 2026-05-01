@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lamination Monitoring | Local Agent</title>
+    <style>
+        :root {
+            --bg: #0a0c10;
+            --surface: #161b22;
+            --surface-hover: #1c2128;
+            --border: #30363d;
+            --text: #c9d1d9;
+            --text-faint: #8b949e;
+            --accent: #58a6ff;
+            --green: #3fb950;
+            --yellow: #d29922;
+            --red: #f85149;
+            --glass: rgba(22, 27, 34, 0.8);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+            padding: 20px;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding: 16px;
+            background: var(--glass);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            position: sticky;
+            top: 20px;
+            z-index: 100;
+        }
+
+        .brand h1 { font-size: 1.25rem; font-weight: 600; }
+        .brand p { font-size: 0.8rem; color: var(--text-faint); }
+
+        .status-pill {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            font-size: 0.85rem;
+        }
+
+        .conn-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-faint);
+        }
+        .conn-dot.online { background: var(--green); box-shadow: 0 0 8px var(--green); }
+        .conn-dot.offline { background: var(--red); }
+
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 24px;
+        }
+
+        .section {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .section-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-faint);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 4px;
+            padding-left: 4px;
+        }
+
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 12px;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            transition: transform 0.2s, background 0.2s;
+            position: relative;
+            overflow: hidden;
+        }
+        .card:hover { background: var(--surface-hover); transform: translateY(-2px); }
+
+        .card.on { border-color: var(--green); }
+        .card.warn { border-color: var(--yellow); }
+        .card.alarm { border-color: var(--red); }
+        .card.fault { background: rgba(248, 81, 73, 0.1); border-color: var(--red); }
+
+        .card-name { font-size: 0.75rem; color: var(--text-faint); margin-bottom: 8px; }
+        .card-value { font-size: 1.5rem; font-weight: 700; }
+        .card-value.err { color: var(--red); }
+        .card-unit { font-size: 0.7rem; color: var(--text-faint); margin-top: 2px; }
+        .card-addr { position: absolute; bottom: 4px; right: 8px; font-size: 0.6rem; color: var(--border); }
+
+        .threshold-bar {
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            margin-top: 12px;
+            display: none;
+        }
+        .threshold-bar.visible { display: block; }
+        .threshold-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+
+        footer {
+            margin-top: 40px;
+            padding: 16px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            color: var(--text-faint);
+        }
+
+        .status-bar { display: flex; gap: 20px; }
+        b { color: var(--text); }
+
+        @media (max-width: 600px) {
+            header { flex-direction: column; gap: 12px; align-items: flex-start; }
+            .grid-container { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="brand">
+            <h1>Lamination Dashboard</h1>
+            <p id="tickTime">--:--:--</p>
+        </div>
+        <div style="display: flex; gap: 12px;">
+            <div class="status-pill">
+                <div id="connDot" class="conn-dot"></div>
+                <span id="connLabel">CONNECTING...</span>
+            </div>
+            <div class="status-pill" id="tickCount">read #0</div>
+        </div>
+    </header>
+
+    <div class="grid-container">
+        <div class="section">
+            <div class="section-title">Extruder</div>
+            <div class="card-grid" id="section-extruder"></div>
+        </div>
+        <div class="section">
+            <div class="section-title">Laminator</div>
+            <div class="card-grid" id="section-laminator"></div>
+        </div>
+        <div class="section">
+            <div class="section-title">Winder</div>
+            <div class="card-grid" id="section-winder"></div>
+        </div>
+        <div class="section">
+            <div class="section-title">Master Control</div>
+            <div class="card-grid" id="section-master"></div>
+        </div>
+        <div class="section">
+            <div class="section-title">Unwinder</div>
+            <div class="card-grid" id="section-unwinder"></div>
+        </div>
+        <div class="section">
+            <div class="section-title">Production</div>
+            <div class="card-grid" id="section-meters"></div>
+        </div>
+        <div class="section">
+            <div class="section-title">GSM / Grammage</div>
+            <div class="card-grid" id="section-gsm"></div>
+        </div>
+        <div class="section">
+            <div class="section-title">Safety & Alarms</div>
+            <div class="card-grid" id="section-alarms"></div>
+        </div>
+        <div class="section">
+            <div class="section-title">Splice</div>
+            <div class="card-grid" id="section-splice"></div>
+        </div>
+    </div>
+
+    <footer>
+        <div class="status-bar">
+            <span id="sbAlarms">Alarms: <b>0</b></span>
+            <span id="sbWarns">Warns: <b>0</b></span>
+            <span id="sbErrors">Errors: <b>0</b></span>
+        </div>
+        <div id="sbPush">Cloud: <b>OFFLINE</b></div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

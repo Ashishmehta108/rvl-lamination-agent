@@ -79,8 +79,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       >
         {children}
       </div>
-
-      {/* ─── Mobile bottom nav (< md only) ─── */}
       <nav
         aria-label="Mobile navigation"
         className="md:hidden flex"
@@ -89,7 +87,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           bottom: 0, left: 0, right: 0,
           zIndex: 60,
           height: 60,
-          display: "flex",
+          // ❌ removed: display: "flex"  ← was overriding md:hidden
           background: "var(--surface)",
           borderTop: "1px solid var(--border)",
           paddingBottom: "env(safe-area-inset-bottom)",

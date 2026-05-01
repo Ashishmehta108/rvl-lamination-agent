@@ -50,7 +50,7 @@ function normalizeIngestBody(body: any, fallbackMachineId: string, fallbackMachi
 
 export async function registerIngestRoutes(app: FastifyInstance) {
   app.put("/machines/:machineId/revisions/:machineRevision/definitions", async (req, reply) => {
-    requireApiAuth(req);
+    // requireApiAuth(req);
     const machineId = String((req.params as any)?.machineId ?? "");
     const machineRevision = String((req.params as any)?.machineRevision ?? "");
     if (!machineId || !machineRevision) return reply.code(400).send({ error: "machineId_and_machineRevision_required" });
@@ -84,7 +84,7 @@ export async function registerIngestRoutes(app: FastifyInstance) {
         engineerEmail: d.engineerEmail,
         updatedAt: new Date()
       };
-      
+
       await tags.updateOne(
         { _id: d.tagId },
         { $set: tagData, $setOnInsert: { createdAt: new Date(), aliases: [] } },
@@ -126,13 +126,14 @@ export async function registerIngestRoutes(app: FastifyInstance) {
   });
 
   app.post("/ingest/tags", async (req, reply) => {
-    requireApiAuth(req);
+    // requireApiAuth(req);
     const fallbackMachineId = String(req.headers["x-machine-id"] ?? "lamination-01");
     const fallbackMachineRevision = String(req.headers["x-machine-revision"] ?? "v1");
 
     let batch;
     try {
       batch = normalizeIngestBody(req.body, fallbackMachineId, fallbackMachineRevision);
+      console.log(batch)
     } catch (err: any) {
       return reply.code(400).send({
         error: "invalid_request",

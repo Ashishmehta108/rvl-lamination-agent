@@ -47,9 +47,11 @@ export function useDashboard(machineId: string) {
       const point: any = { t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) };
       tagsData.items.forEach((item) => {
         if (typeof item.valueNumber === 'number') {
-          // Use slug if available for easier mapping in components, fallback to tagId
           const key = item.slug || item.tagId;
-          point[key] = item.valueNumber;
+          // Since items are sorted by updatedAt desc, only set if not already present
+          if (point[key] === undefined) {
+            point[key] = item.valueNumber;
+          }
         }
       });
 

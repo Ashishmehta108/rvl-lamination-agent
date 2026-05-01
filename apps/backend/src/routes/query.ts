@@ -155,7 +155,11 @@ export async function registerQueryRoutes(app: FastifyInstance) {
     validateMachineAccess(machineId);
 
     const prisma = getMongoClient();
-    const items = await prisma.tagLatest.findMany({ where: { machineId }, take: 500 });
+    const items = await prisma.tagLatest.findMany({ 
+      where: { machineId }, 
+      orderBy: { updatedAt: 'desc' },
+      take: 500 
+    });
 
     // Fetch definitions for this machine to get human-readable slugs/names
     const definitions = await prisma.tagDefinition.findMany({

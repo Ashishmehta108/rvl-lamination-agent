@@ -46,7 +46,7 @@ MONTHLY_REPORT_HOUR = int(os.getenv("MONTHLY_REPORT_HOUR", "6"))
 
 # ── Flask Server ─────────────────────────────────────────────────
 FLASK_HOST = os.getenv("FLASK_HOST", "0.0.0.0")
-FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
+FLASK_PORT = int(os.getenv("FLASK_PORT", "4444"))
 
 # ── HMI / Modbus (can override modbus_reader defaults) ──────────
 HMI_IP = os.getenv("HMI_IP", "192.168.1.17")
