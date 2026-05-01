@@ -15,9 +15,9 @@ export default function MessageItem({ msg, isLast }: MessageItemProps) {
 
   if (!isAssistant) {
     return (
-      <div className="rvl-msg" style={{ display: "flex", justifyContent: "flex-end", gap: 6, padding: "4px 0", alignItems: "flex-end" }}>
-        <CopyBtn text={msg.content} />
-        <div style={{ maxWidth: "78%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "18px 18px 4px 18px", padding: "10px 16px", fontSize: 14, lineHeight: 1.7, color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+      <div className="rvl-msg" style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "6px 0", alignItems: "flex-end" }}>
+        <div className="rvl-msg-actions"><CopyBtn text={msg.content} /></div>
+        <div className="rvl-user-bubble" style={{ maxWidth: "78%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "20px 20px 4px 20px", padding: "12px 18px", fontSize: 14, lineHeight: 1.7, color: "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
           {msg.content}
         </div>
       </div>
@@ -25,27 +25,27 @@ export default function MessageItem({ msg, isLast }: MessageItemProps) {
   }
 
   return (
-    <div className="rvl-msg" style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "4px 0" }}>
-      <div style={{ flexShrink: 0, marginTop: 3, width: 26, height: 26, borderRadius: 7, background: "var(--accent-faint)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <Cpu size={13} color="var(--accent)" variant="Bulk" />
+    <div className="rvl-msg" style={{ display: "flex", alignItems: "flex-start", gap: 14, padding: "8px 0" }}>
+      <div className="rvl-assistant-avatar" style={{ flexShrink: 0, marginTop: 3, width: 30, height: 30, borderRadius: 9, background: "linear-gradient(135deg, var(--accent-faint), color-mix(in srgb, var(--accent) 15%, var(--surface)))", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Cpu size={14} color="var(--accent)" variant="Bulk" />
       </div>
       <div style={{ flex: 1, minWidth: 0, paddingTop: 3 }}>
-        <div style={{ fontSize: 14, lineHeight: 1.75, color: msg.error ? "#c45" : "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+        <div style={{ fontSize: 14, lineHeight: 1.8, color: msg.error ? "#c45" : "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
           {text}
           {isLast && text.length < msg.content.length && (
-            <span style={{ display: "inline-block", width: 2, height: 14, background: "var(--accent)", marginLeft: 2, verticalAlign: "middle", animation: "rvl-blink 1s step-end infinite" }} />
+            <span style={{ display: "inline-block", width: 2, height: 16, background: "var(--accent)", marginLeft: 2, verticalAlign: "middle", animation: "rvl-blink 1s step-end infinite", borderRadius: 1 }} />
           )}
         </div>
         {msg.citations && msg.citations.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 10 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
             {msg.citations.map((c, i) => (
-              <span key={i} title={c.sourceUri ?? c.chunkId} style={{ fontSize: 10.5, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 4, padding: "2px 8px", color: "var(--accent)", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <span key={i} className="rvl-citation" title={c.sourceUri ?? c.chunkId} style={{ fontSize: 10.5, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, padding: "3px 10px", color: "var(--accent)", fontWeight: 500, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 [{c.index}] {c.sourceUri ?? c.chunkId}
               </span>
             ))}
           </div>
         )}
-        <div style={{ marginTop: 6 }}><CopyBtn text={msg.content} /></div>
+        <div className="rvl-msg-actions" style={{ marginTop: 6 }}><CopyBtn text={msg.content} /></div>
       </div>
     </div>
   );

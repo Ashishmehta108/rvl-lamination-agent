@@ -45,12 +45,7 @@ export default function ChatPage() {
         @keyframes rvl-bounce { 0%,80%,100%{transform:translateY(0);opacity:.35}40%{transform:translateY(-5px);opacity:1} }
         @keyframes rvl-fadein { from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)} }
         @keyframes rvl-blink  { 0%,100%{opacity:1}50%{opacity:0} }
-        .rvl-msg { animation: rvl-fadein .24s cubic-bezier(.22,1,.36,1) both }
-        .rvl-conv-item:hover .rvl-del { opacity:1!important }
-        .rvl-conv-item:hover { background:var(--surface-2)!important }
-        .rvl-conv-item.active { background:var(--surface-3)!important; border-left:2px solid var(--accent)!important }
-        .rvl-chip:hover { background:var(--surface-3)!important; border-color:var(--text-faint)!important }
-        .rvl-input-focused { border-color: var(--accent)!important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent)!important }
+        .rvl-msg { animation: rvl-fadein .28s cubic-bezier(.22,1,.36,1) both }
         .rvl-sidebar { transition: width .22s cubic-bezier(.4,0,.2,1), opacity .2s }
       `}</style>
 
@@ -67,18 +62,23 @@ export default function ChatPage() {
           onDelete={deleteConversation}
         />
 
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
+          {!sidebarOpen && (
+            <button onClick={() => setSidebarOpen(true)} title="Open sidebar" style={{
+              position: "absolute", top: 12, left: 12, zIndex: 50,
+              background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, padding: 7,
+              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+              color: "var(--text-muted)", boxShadow: "var(--shadow)", transition: "all .15s ease"
+            }}>
+              <SidebarLeft size={16} color="currentColor" />
+            </button>
+          )}
           <AppHeader
             title={active?.title ?? "RAG Assistant"}
             subtitle={active ? `${active.machineId} · phi4-mini · Ollama` : "RVL Lamination · Ollama + RAG"}
             icon={<Flash size={14} color="var(--accent)" variant="Bulk" />}
             rightSlot={
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {!sidebarOpen && (
-                  <button onClick={() => setSidebarOpen(true)} title="Open sidebar" style={{ background: "none", border: "1px solid var(--border)", borderRadius: 7, padding: 6, cursor: "pointer", display: "flex", color: "var(--text-muted)" }}>
-                    <SidebarLeft size={14} color="currentColor" />
-                  </button>
-                )}
                 <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Machine</span>
                 <input 
                   value={active?.machineId ?? "machine_1"} 
@@ -89,40 +89,40 @@ export default function ChatPage() {
             }
           />
 
-          <div style={{ flex: 1, overflowY: "auto", padding: isEmpty ? 0 : "24px 0 8px" }}>
+          <div className="rvl-chat-scroll" style={{ flex: 1, overflowY: "auto", padding: isEmpty ? 0 : "28px 0 12px" }}>
             {isEmpty ? (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 20, padding: "0 20px", textAlign: "center" }}>
-                <div style={{ width: 52, height: 52, borderRadius: 14, background: "var(--accent-faint)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Flash size={24} color="var(--accent)" variant="Bulk" />
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 24, padding: "0 24px", textAlign: "center" }}>
+                <div className="rvl-hero-icon" style={{ width: 64, height: 64, borderRadius: 18, background: "linear-gradient(135deg, var(--accent-faint), color-mix(in srgb, var(--accent) 15%, var(--surface)))", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Flash size={28} color="var(--accent)" variant="Bulk" />
                 </div>
                 <div>
-                  <div style={{ fontSize: 17, fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>RVL Lamination Assistant</div>
-                  <div style={{ fontSize: 13, color: "var(--text-muted)", maxWidth: 360, lineHeight: 1.6 }}>
-                    Ask anything about your machine's tags, alerts, or operational data.
+                  <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)", marginBottom: 8, letterSpacing: "-0.02em" }}>RVL Lamination Assistant</div>
+                  <div style={{ fontSize: 14, color: "var(--text-muted)", maxWidth: 400, lineHeight: 1.65, margin: "0 auto" }}>
+                    Ask anything about your machine’s tags, alerts, or operational data.
                   </div>
                 </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", maxWidth: 540 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", maxWidth: 580, marginTop: 4 }}>
                   {SUGGESTED.map(s => (
-                    <button key={s} className="rvl-chip" onClick={() => handleSend(s)} style={{ fontSize: 12, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 20, padding: "6px 14px", color: "var(--text-muted)", cursor: "pointer", transition: "background .15s", fontFamily: "inherit" }}>
+                    <button key={s} className="rvl-chip" onClick={() => handleSend(s)} style={{ fontSize: 12.5, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 24, padding: "8px 18px", color: "var(--text-muted)", cursor: "pointer", transition: "all .2s ease", fontFamily: "inherit", fontWeight: 500 }}>
                       {s}
                     </button>
                   ))}
                 </div>
               </div>
             ) : (
-              <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 20px", display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ maxWidth: 740, margin: "0 auto", padding: "0 24px", display: "flex", flexDirection: "column", gap: 8 }}>
                 {msgs.map((msg, i) => (
                   <MessageItem key={i} msg={msg} isLast={i === msgs.length - 1} />
                 ))}
                 {loading && (
-                   <div className="rvl-msg" style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "4px 0" }}>
-                      <div style={{ flexShrink: 0, marginTop: 3, width: 26, height: 26, borderRadius: 7, background: "var(--accent-faint)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <Cpu size={13} color="var(--accent)" variant="Bulk" />
+                   <div className="rvl-msg" style={{ display: "flex", alignItems: "flex-start", gap: 14, padding: "8px 0" }}>
+                      <div className="rvl-assistant-avatar" style={{ flexShrink: 0, marginTop: 3, width: 30, height: 30, borderRadius: 9, background: "linear-gradient(135deg, var(--accent-faint), color-mix(in srgb, var(--accent) 15%, var(--surface)))", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <Cpu size={14} color="var(--accent)" variant="Bulk" />
                       </div>
                       <div style={{ paddingTop: 10 }}><TypingDots /></div>
                     </div>
                 )}
-                <div ref={bottomRef} style={{ height: 4 }} />
+                <div ref={bottomRef} style={{ height: 8 }} />
               </div>
             )}
           </div>

@@ -100,3 +100,91 @@ body {
   transition-duration: .2s;
   transition-timing-function: ease;
 }
+
+/* ── Chat-Specific Styles ──────────────────────────────────────────────── */
+
+/* Scrollbar */
+.rvl-chat-scroll::-webkit-scrollbar { width: 5px; }
+.rvl-chat-scroll::-webkit-scrollbar-track { background: transparent; }
+.rvl-chat-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
+.rvl-chat-scroll::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+
+/* Sidebar scrollbar */
+.rvl-sidebar::-webkit-scrollbar { width: 4px; }
+.rvl-sidebar::-webkit-scrollbar-track { background: transparent; }
+.rvl-sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
+
+/* Empty state hero icon pulse */
+@keyframes rvl-pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 20%, transparent); }
+  50% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+.rvl-hero-icon {
+  animation: rvl-pulse-glow 3s ease-in-out infinite;
+}
+
+/* Suggestion chips */
+.rvl-chip {
+  position: relative;
+  overflow: hidden;
+}
+.rvl-chip::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent);
+  opacity: 0;
+  transition: opacity .25s ease;
+}
+.rvl-chip:hover::before { opacity: 1; }
+
+/* Message hover actions */
+.rvl-msg .rvl-msg-actions { opacity: 0; transition: opacity .15s ease; }
+.rvl-msg:hover .rvl-msg-actions { opacity: 1; }
+
+/* User bubble gradient accent line */
+.rvl-user-bubble {
+  position: relative;
+}
+.rvl-user-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 2px;
+  height: 60%;
+  border-radius: 2px;
+  background: linear-gradient(to top, var(--accent), transparent);
+  opacity: .35;
+}
+
+/* Input focus ring */
+.rvl-input-focused {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent), 0 2px 8px rgba(0,0,0,.06) !important;
+}
+
+/* Sidebar conversation item */
+.rvl-conv-item { transition: all .15s ease; }
+.rvl-conv-item:hover .rvl-del { opacity: 1 !important; }
+.rvl-conv-item:hover { background: var(--surface-2) !important; }
+.rvl-conv-item.active { background: var(--surface-3) !important; border-left: 2px solid var(--accent) !important; }
+
+/* Assistant avatar shimmer on new message */
+@keyframes rvl-avatar-pop {
+  0% { transform: scale(.85); opacity: 0; }
+  60% { transform: scale(1.08); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.rvl-assistant-avatar { animation: rvl-avatar-pop .3s cubic-bezier(.22,1,.36,1) both; }
+
+/* Citation tag hover */
+.rvl-citation {
+  transition: all .15s ease;
+  cursor: default;
+}
+.rvl-citation:hover {
+  background: var(--accent-faint) !important;
+  border-color: var(--accent) !important;
+}

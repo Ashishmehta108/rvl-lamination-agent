@@ -15,8 +15,11 @@ export default function CopyBtn({ text }: CopyBtnProps) {
 
   return (
     <button onClick={copy} title="Copy" style={{
-      background: "none", border: "none", cursor: "pointer", padding: 4, borderRadius: 5, color: "var(--text-faint)", display: "flex", alignItems: "center", transition: "color .15s"
-    }}>
+      background: "none", border: "1px solid transparent", cursor: "pointer", padding: 5, borderRadius: 6, color: "var(--text-faint)", display: "flex", alignItems: "center", transition: "all .15s ease"
+    }}
+    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLElement).style.background = "var(--surface-2)"; }}
+    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "transparent"; (e.currentTarget as HTMLElement).style.background = "none"; }}
+    >
       {copied ? <TickCircle size={14} color="var(--accent)" variant="Bulk" /> : <Copy size={14} color="currentColor" />}
     </button>
   );
