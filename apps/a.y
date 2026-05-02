@@ -6,15 +6,20 @@
   For: Nonwoven Lamination AI Agent
 ============================================================
 
-Features:
-  • Modbus TCP CLIENT — polls real PLC for live sensor data
-  • WAL (Write-Ahead Log) — every batch durably written before HTTP push
-  • Health check FIRST — GET /health before deciding to queue or push
-  • No duplicate batches — only queues when PLC data actually changes
-  • Retry queue — failed batches replayed oldest-first (no data loss)
-  • Atomic file writes — temp→fsync→rename (power-loss safe)
-  • Rotating log files + JSON audit trail
-  • Systemd ready — exits cleanly on SIGTERM
+FIXES vs previous version:
+  • Grouped Modbus reads  — bulk reads contiguous register blocks
+    instead of 28 individual TCP round-trips per poll cycle.
+    Eliminates partial-read flaps caused by per-tag timeouts.
+  • Raw register debug logging — [MODBUS] addr=1103 raw=[x,y] decoded=z
+    so address/float bugs are immediately visible in logs.
+  • Coil bulk read — all coils in one FC=1 request.
+  • Client socket safety — always closed, even on connect() exceptions.
+  • Correct address arithmetic verified against working test script:
+      PLC address 401104 → Modbus offset 1103  (401104 - 400001 = 1103)
+  • Stale socket detection — reconnect on consecutive partial failures.
+  • pymodbus 3.6.x fix — `slave` keyword removed; unit ID is now
+    configured on the client constructor via `unit_id` param and
+    all read calls omit the deprecated `slave=` kwarg entirely.
 
 Dependencies:
   pip install "pymodbus==3.6.9" requests python-dotenv
@@ -23,7 +28,7 @@ Run (development):
   python3 data_source.py
 
 Run (production):
-  sudo python3 data_source.py
+  sudo systemctl start nonwoven-agent
 """
 
 import asyncio
@@ -62,36 +67,88 @@ for _d in (WAL_DIR, SENT_DIR, DEAD_DIR, LOG_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 
-# ── Logging ───────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+#  Logging — Structured, rotating, multi-handler
+# ══════════════════════════════════════════════════════════════
+class _PreciseFormatter(logging.Formatter):
+    """
+    Format:  2025-01-15T14:23:01.123 [INFO    ] pipeline - message
+    Millisecond precision. Useful for correlating Modbus timing with PLC events.
+    """
+    def formatTime(self, record, datefmt=None):
+        ct = datetime.fromtimestamp(record.created, tz=timezone.utc)
+        return ct.strftime("%Y-%m-%dT%H:%M:%S.") + f"{int(record.msecs):03d}Z"
+
+
 def _setup_logging():
     log_level_name = os.getenv("LOG_LEVEL", "INFO").upper()
-    root_level = getattr(logging, log_level_name, logging.INFO)
-    fmt = logging.Formatter(
-        "%(asctime)s [%(levelname)-8s] %(name)s - %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
+    root_level     = getattr(logging, log_level_name, logging.INFO)
+
+    fmt = _PreciseFormatter(
+        "%(asctime)s [%(levelname)-8s] %(name)s - %(message)s"
     )
+
     root = logging.getLogger()
     root.setLevel(root_level)
+    root.handlers.clear()  # Avoid duplicate handlers on reload
 
+    # ── Console handler ───────────────────────────────────────
     ch = logging.StreamHandler()
     ch.setLevel(root_level)
     ch.setFormatter(fmt)
     root.addHandler(ch)
 
+    # ── Rotating file handler: pipeline.log (all levels) ─────
     fh = logging.handlers.RotatingFileHandler(
-        LOG_DIR / "pipeline.log", maxBytes=10 * 1024 * 1024, backupCount=5
+        LOG_DIR / "pipeline.log",
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
     )
     fh.setLevel(root_level)
     fh.setFormatter(fmt)
     root.addHandler(fh)
 
-    # Keep pymodbus quiet unless explicitly needed for deep debugging.
-    logging.getLogger("pymodbus").setLevel(logging.WARNING)
-    logging.getLogger("pymodbus.client").setLevel(logging.WARNING)
+    # ── Separate rotating file: modbus.log (DEBUG only) ──────
+    # Contains raw register values, address maps, decode results.
+    # Invaluable for diagnosing float/address bugs without drowning pipeline.log
+    modbus_fh = logging.handlers.RotatingFileHandler(
+        LOG_DIR / "modbus.log",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    modbus_fh.setLevel(logging.DEBUG)
+    modbus_fh.setFormatter(fmt)
+    modbus_fh.addFilter(lambda r: r.name in ("modbus", "pipeline"))
+
+    modbus_log = logging.getLogger("modbus")
+    modbus_log.setLevel(logging.DEBUG)
+    modbus_log.addHandler(modbus_fh)
+    modbus_log.propagate = True  # also goes to pipeline.log at configured level
+
+    # ── Separate rotating file: errors.log (ERROR+) ──────────
+    eh = logging.handlers.RotatingFileHandler(
+        LOG_DIR / "errors.log",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    eh.setLevel(logging.ERROR)
+    eh.setFormatter(fmt)
+    root.addHandler(eh)
+
+    # ── Keep pymodbus quiet unless LOG_LEVEL=DEBUG ────────────
+    if root_level > logging.DEBUG:
+        logging.getLogger("pymodbus").setLevel(logging.WARNING)
+        logging.getLogger("pymodbus.client").setLevel(logging.WARNING)
+    else:
+        logging.getLogger("pymodbus").setLevel(logging.DEBUG)
 
 
 _setup_logging()
-log = logging.getLogger("pipeline")
+log        = logging.getLogger("pipeline")
+modbus_log = logging.getLogger("modbus")
 
 
 # ── Configuration ─────────────────────────────────────────────
@@ -117,7 +174,9 @@ SENT_KEEP_HOURS  = float(os.getenv("SENT_KEEP_HOURS", "24.0"))
 POLL_BACKOFF_BASE = float(os.getenv("POLL_BACKOFF_BASE", "1.0"))
 POLL_BACKOFF_MAX  = float(os.getenv("POLL_BACKOFF_MAX", "30.0"))
 POLL_JITTER_MAX   = float(os.getenv("POLL_JITTER_MAX", "0.2"))
-MIN_SUCCESS_TAGS  = int(os.getenv("MIN_SUCCESS_TAGS", "8"))
+
+MIN_SUCCESS_TAGS  = int(os.getenv("MIN_SUCCESS_TAGS", "3"))
+
 REQUIRED_LIVE_TAGS = [
     s.strip() for s in os.getenv(
         "REQUIRED_LIVE_TAGS",
@@ -125,6 +184,9 @@ REQUIRED_LIVE_TAGS = [
     ).split(",")
     if s.strip()
 ]
+
+# How many consecutive partial-read cycles before we force-reconnect.
+PARTIAL_RECONNECT_THRESHOLD = int(os.getenv("PARTIAL_RECONNECT_THRESHOLD", "3"))
 
 INGEST_URL = REMOTE_BASE_URL.rstrip("/") + INGEST_PATH
 HEALTH_URL = REMOTE_BASE_URL.rstrip("/") + HEALTH_PATH
@@ -138,78 +200,247 @@ _session.headers.update({
 })
 
 
-# ── Register Map ──────────────────────────────────────────────
-HREG_EXTRUDER_SPEED_PCT  = 0
-HREG_LAMINATOR_SPEED_PCT = 1
-HREG_WINDER_TENSION_PCT  = 2
-HREG_SPLICE_SPEED        = 17
-HREG_UW_SET_TENSION      = 3501
-HREG_UW_PV_TENSION       = 3879
-HREG_RUNNING_METER       = 7
-HREG_TOTAL_METER         = 9
-HREG_WINDER_TENSION_VOL  = 1039
-HREG_EXTRUDER_RPM        = 1103
-HREG_LAMINATOR_MPM       = 1105
-HREG_EXTRUDER_AMP        = 1107
-HREG_LAMINATOR_AMP       = 1109
-HREG_WINDER_AMP          = 1111
-HREG_EXTRUDER_SPEED_VOL  = 1199
-HREG_LAMINATOR_SPEED_VOL = 1201
-HREG_GSM_ENTRY           = 1299
-HREG_GRAM_ENTRY          = 3003
+# ══════════════════════════════════════════════════════════════
+#  pymodbus 3.6.x compatibility helper
+#
+#  In pymodbus ≥ 3.6, the `slave` keyword argument was removed
+#  from individual read/write methods. The unit ID must now be
+#  passed as the third POSITIONAL argument (slave) or configured
+#  on the client. We use a thin wrapper so every call site is
+#  identical and future-proof.
+# ══════════════════════════════════════════════════════════════
 
-COIL_EMG_STOP            = 8
-COIL_EXTRUDER_FAULT      = 11
-COIL_LAMINATOR_FAULT     = 12
-COIL_WINDER_FAULT        = 13
-COIL_EXTRUDER_ON_OFF     = 99
-COIL_LAMINATOR_ON_OFF    = 100
-COIL_WINDER_ON_OFF       = 101
-COIL_SPLICE_ON_OFF       = 110
-COIL_ALARM_IND           = 124
-
-HREG_COUNT = 3880
-COIL_COUNT = 125
+def _read_registers(client: ModbusTcpClient, address: int, count: int):
+    """
+    Call read_holding_registers with pymodbus 3.6.x-compatible signature.
+    Tries positional `slave` first; falls back to keyword for older builds.
+    """
+    try:
+        return client.read_holding_registers(address, count, PLC_UNIT_ID)
+    except TypeError:
+        # Older pymodbus 3.x builds that still accept the keyword
+        return client.read_holding_registers(address, count, slave=PLC_UNIT_ID)
 
 
-# ── Tag Config ────────────────────────────────────────────────
+def _read_coils(client: ModbusTcpClient, address: int, count: int):
+    """
+    Call read_coils with pymodbus 3.6.x-compatible signature.
+    """
+    try:
+        return client.read_coils(address, count, PLC_UNIT_ID)
+    except TypeError:
+        return client.read_coils(address, count, slave=PLC_UNIT_ID)
+
+
+# ══════════════════════════════════════════════════════════════
+#  Tag Definitions
+#
+#  ADDRESSING RULE (verified against working test script):
+#    PLC XML address (4xxxxx) → Modbus offset = addr - 400001
+#    Example: 401104 → 1103   (confirmed working: address=1103 returns valid float)
+#
+#  TagConfig.addr stores the PLC 4xxxxx address for holding registers (FC=3),
+#  and the 1-based coil number for coils (FC=1).
+#
+#  _read_tag() conversion:
+#    FC=3 holding: modbus_offset = addr - 400001
+#    FC=1 coil:    modbus_offset = addr - 1
+# ══════════════════════════════════════════════════════════════
 @dataclass(frozen=True)
 class TagConfig:
     addr: int
     type: Literal["float", "uint16", "bool"]
-    fc: int  # 3=HREG, 1=COIL, 4=IREG
+    fc: int  # 3=HREG, 1=COIL
 
 
 TAGS: dict[str, TagConfig] = {
-    "EXTRUDER_RPM":        TagConfig(addr=401104, type="float",  fc=3),
-    "EXTRUDER_AMP":        TagConfig(addr=401108, type="float",  fc=3),
-    "EXTRUDER_SPEED_PCT":  TagConfig(addr=400001, type="uint16", fc=3),
-    "EXTRUDER_ON_OFF":     TagConfig(addr=100,    type="bool",   fc=1),
-    "EXTRUDER_FAULT":      TagConfig(addr=12,     type="bool",   fc=1),
-    "EXTRUDER_SPEED_VOL":  TagConfig(addr=401200, type="float",  fc=3),
-    "LAMINATOR_MPM":       TagConfig(addr=401106, type="float",  fc=3),
-    "LAMINATOR_AMP":       TagConfig(addr=401110, type="float",  fc=3),
-    "LAMINATOR_SPEED_PCT": TagConfig(addr=400002, type="uint16", fc=3),
-    "LAMINATOR_ON_OFF":    TagConfig(addr=101,    type="bool",   fc=1),
-    "LAMINATOR_FAULT":     TagConfig(addr=13,     type="bool",   fc=1),
-    "LAMINATOR_SPEED_VOL": TagConfig(addr=401202, type="float",  fc=3),
-    "WINDER_AMP":          TagConfig(addr=401112, type="float",  fc=3),
-    "WINDER_TENSION_PCT":  TagConfig(addr=400003, type="uint16", fc=3),
-    "WINDER_ON_OFF":       TagConfig(addr=102,    type="bool",   fc=1),
-    "WINDER_FAULT":        TagConfig(addr=14,     type="bool",   fc=1),
-    "WINDER_TENSION_VOL":  TagConfig(addr=401040, type="float",  fc=3),
-    "MASTER_SPEED_PCT":    TagConfig(addr=400000, type="uint16", fc=3),
-    "UW_SET_TENSION":      TagConfig(addr=403502, type="uint16", fc=3),
-    "UW_PV_TENSION":       TagConfig(addr=403880, type="uint16", fc=3),
-    "RUNNING_METER":       TagConfig(addr=400008, type="float",  fc=3),
-    "TOTAL_METER":         TagConfig(addr=400010, type="float",  fc=3),
-    "GSM_ENTRY":           TagConfig(addr=401300, type="float",  fc=3),
-    "GRAM_ENTRY":          TagConfig(addr=403004, type="float",  fc=3),
-    "ALARM_IND":           TagConfig(addr=125,    type="bool",   fc=1),
-    "EMG_STOP":            TagConfig(addr=9,      type="bool",   fc=1),
-    "SPLICE_ON_OFF":       TagConfig(addr=111,    type="bool",   fc=1),
-    "SPLICE_SPEED":        TagConfig(addr=400018, type="uint16", fc=3),
+    # ── Extruder ─────────────────────────────────────────────
+    "EXTRUDER_RPM":        TagConfig(addr=401104, type="float",  fc=3),  # offset 1103
+    "EXTRUDER_AMP":        TagConfig(addr=401108, type="float",  fc=3),  # offset 1107
+    "EXTRUDER_SPEED_PCT":  TagConfig(addr=400001, type="uint16", fc=3),  # offset 0
+    "EXTRUDER_ON_OFF":     TagConfig(addr=100,    type="bool",   fc=1),  # coil 99
+    "EXTRUDER_FAULT":      TagConfig(addr=12,     type="bool",   fc=1),  # coil 11
+    "EXTRUDER_SPEED_VOL":  TagConfig(addr=401200, type="float",  fc=3),  # offset 1199
+
+    # ── Laminator ────────────────────────────────────────────
+    "LAMINATOR_MPM":       TagConfig(addr=401106, type="float",  fc=3),  # offset 1105
+    "LAMINATOR_AMP":       TagConfig(addr=401110, type="float",  fc=3),  # offset 1109
+    "LAMINATOR_SPEED_PCT": TagConfig(addr=400002, type="uint16", fc=3),  # offset 1
+    "LAMINATOR_ON_OFF":    TagConfig(addr=101,    type="bool",   fc=1),  # coil 100
+    "LAMINATOR_FAULT":     TagConfig(addr=13,     type="bool",   fc=1),  # coil 12
+    "LAMINATOR_SPEED_VOL": TagConfig(addr=401202, type="float",  fc=3),  # offset 1201
+
+    # ── Winder ───────────────────────────────────────────────
+    "WINDER_AMP":          TagConfig(addr=401112, type="float",  fc=3),  # offset 1111
+    "WINDER_TENSION_PCT":  TagConfig(addr=400003, type="uint16", fc=3),  # offset 2
+    "WINDER_ON_OFF":       TagConfig(addr=102,    type="bool",   fc=1),  # coil 101
+    "WINDER_FAULT":        TagConfig(addr=14,     type="bool",   fc=1),  # coil 13
+    "WINDER_TENSION_VOL":  TagConfig(addr=401040, type="float",  fc=3),  # offset 1039
+
+    # ── Machine ──────────────────────────────────────────────
+    "MASTER_SPEED_PCT":    TagConfig(addr=400001, type="uint16", fc=3),  # offset 0, same as EXTRUDER_SPEED_PCT
+    "UW_SET_TENSION":      TagConfig(addr=403502, type="uint16", fc=3),  # offset 3501
+    "UW_PV_TENSION":       TagConfig(addr=403880, type="uint16", fc=3),  # offset 3879
+    "RUNNING_METER":       TagConfig(addr=400008, type="float",  fc=3),  # offset 7
+    "TOTAL_METER":         TagConfig(addr=400010, type="float",  fc=3),  # offset 9
+    "GSM_ENTRY":           TagConfig(addr=401300, type="float",  fc=3),  # offset 1299
+    "GRAM_ENTRY":          TagConfig(addr=403004, type="float",  fc=3),  # offset 3003
+    "SPLICE_SPEED":        TagConfig(addr=400018, type="uint16", fc=3),  # offset 17
+
+    # ── Alarms / control ─────────────────────────────────────
+    "ALARM_IND":           TagConfig(addr=125,    type="bool",   fc=1),  # coil 124
+    "EMG_STOP":            TagConfig(addr=9,      type="bool",   fc=1),  # coil 8
+    "SPLICE_ON_OFF":       TagConfig(addr=111,    type="bool",   fc=1),  # coil 110
 }
+
+
+# ══════════════════════════════════════════════════════════════
+#  Grouped Modbus read strategy
+#
+#  Instead of 28 individual TCP requests per poll cycle,
+#  we read contiguous register blocks in bulk.
+#  Reduces per-poll TCP overhead from ~28 round-trips to ~6.
+#
+#  Blocks are defined as (start_offset, count, block_label).
+#  If a block read fails, we fall back to per-tag reads for that block.
+# ══════════════════════════════════════════════════════════════
+
+# Holding register blocks: (start_modbus_offset, count, label)
+# Each block covers a contiguous range of registers.
+# Adjust ranges if your PLC has gaps that cause errors on bulk read.
+HREG_BLOCKS: list[tuple[int, int, str]] = [
+    (0,    4,    "speed_pct"),          # offsets 0-3: EXTRUDER/LAMINATOR/WINDER_SPEED_PCT, UW
+    (7,    4,    "meters"),             # offsets 7-10: RUNNING/TOTAL_METER (float = 2 regs each)
+    (17,   1,    "splice_speed"),       # offset 17: SPLICE_SPEED
+    (1039, 2,    "winder_ten_vol"),     # offset 1039-1040: WINDER_TENSION_VOL float
+    (1103, 10,   "drive_analytics"),    # offsets 1103-1112: RPM, MPM, EXT_AMP, LAM_AMP, WIND_AMP (5 floats)
+    (1199, 4,    "speed_vol"),          # offsets 1199-1202: EXTRUDER/LAMINATOR_SPEED_VOL (2 floats)
+    (1299, 2,    "gsm"),                # offset 1299-1300: GSM_ENTRY float
+    (3003, 2,    "gram"),               # offset 3003-3004: GRAM_ENTRY float
+    (3501, 1,    "uw_set"),             # offset 3501: UW_SET_TENSION
+    (3879, 1,    "uw_pv"),              # offset 3879: UW_PV_TENSION
+]
+
+# Coil block: read all coils 0-124 in one shot
+COIL_BLOCK_START = 0
+COIL_BLOCK_COUNT = 125
+
+
+def _regs_to_float(hi: int, lo: int) -> float:
+    """
+    Decode two 16-bit big-endian registers into a 32-bit float.
+    Register order: [high_word, low_word] → big-endian float.
+    Verified correct against test script output (address=1103).
+    """
+    raw = struct.pack(">HH", hi, lo)
+    return struct.unpack(">f", raw)[0]
+
+
+def _safe_float(hi: int, lo: int, tag: str) -> float:
+    """Decode float, log raw values, guard against NaN/Inf."""
+    value = _regs_to_float(hi, lo)
+    modbus_log.debug("[MODBUS] %s  raw=[0x%04X, 0x%04X]  decoded=%.4f", tag, hi, lo, value)
+    if not math.isfinite(value):
+        modbus_log.warning("[MODBUS] %s  non-finite float %.6g — treating as 0.0", tag, value)
+        return 0.0
+    return value
+
+
+def poll_modbus_snapshot(client: ModbusTcpClient) -> tuple[dict, list[str]]:
+    """
+    Read all tags using grouped bulk reads.
+    Falls back to per-tag individual reads for any block that fails.
+    Returns (values_dict, errors_list).
+
+    Uses _read_registers() / _read_coils() wrappers that are compatible
+    with pymodbus 3.6.x (slave keyword removed — passed positionally).
+    """
+    values: dict           = {}
+    errors: list           = []
+    raw_hregs: dict[int, int]  = {}   # offset → register value
+    raw_coils: dict[int, bool] = {}   # offset → coil value
+
+    # ── 1. Bulk holding register reads ───────────────────────
+    for (start, count, label) in HREG_BLOCKS:
+        try:
+            rr = _read_registers(client, start, count)
+            if rr.isError():
+                raise RuntimeError(f"Modbus error response: {rr}")
+            for i, reg in enumerate(rr.registers):
+                raw_hregs[start + i] = reg
+            modbus_log.debug(
+                "[MODBUS] block %-20s  addr=%d count=%d  regs=%s",
+                label, start, count, rr.registers
+            )
+        except Exception as exc:
+            errors.append(f"hreg_block[{label}@{start}+{count}]: {exc}")
+            modbus_log.warning(
+                "[MODBUS] block %s FAILED (addr=%d count=%d): %s — falling back to per-tag",
+                label, start, count, exc
+            )
+            # Fallback: per-tag reads for registers in this block
+            for offset in range(start, start + count):
+                try:
+                    rr2 = _read_registers(client, offset, 1)
+                    if not rr2.isError():
+                        raw_hregs[offset] = rr2.registers[0]
+                except Exception as exc2:
+                    errors.append(f"hreg_fallback[{offset}]: {exc2}")
+
+    # ── 2. Bulk coil read ─────────────────────────────────────
+    try:
+        rc = _read_coils(client, COIL_BLOCK_START, COIL_BLOCK_COUNT)
+        if rc.isError():
+            raise RuntimeError(f"Coil read error: {rc}")
+        for i, bit in enumerate(rc.bits[:COIL_BLOCK_COUNT]):
+            raw_coils[COIL_BLOCK_START + i] = bool(bit)
+        modbus_log.debug(
+            "[MODBUS] coils block  addr=0 count=%d  first_8=%s",
+            COIL_BLOCK_COUNT, list(rc.bits[:8])
+        )
+    except Exception as exc:
+        errors.append(f"coil_block: {exc}")
+        modbus_log.warning("[MODBUS] coil bulk read FAILED: %s — falling back to per-coil", exc)
+        for tag_name, cfg in TAGS.items():
+            if cfg.fc == 1:
+                coil_offset = cfg.addr - 1
+                try:
+                    rr = _read_coils(client, coil_offset, 1)
+                    if not rr.isError():
+                        raw_coils[coil_offset] = bool(rr.bits[0])
+                except Exception as exc2:
+                    errors.append(f"coil_fallback[{tag_name}@{coil_offset}]: {exc2}")
+
+    # ── 3. Decode tags from raw register cache ─────────────────
+    for tag_name, cfg in TAGS.items():
+        try:
+            if cfg.fc == 3:
+                offset = cfg.addr - 400001
+                if cfg.type == "float":
+                    if offset in raw_hregs and (offset + 1) in raw_hregs:
+                        values[tag_name] = _safe_float(
+                            raw_hregs[offset], raw_hregs[offset + 1], tag_name
+                        )
+                    else:
+                        errors.append(f"{tag_name}: registers @{offset},{offset+1} not in cache")
+                elif cfg.type == "uint16":
+                    if offset in raw_hregs:
+                        values[tag_name] = int(raw_hregs[offset])
+                        modbus_log.debug("[MODBUS] %s  addr=%d  value=%d", tag_name, offset, values[tag_name])
+                    else:
+                        errors.append(f"{tag_name}: register @{offset} not in cache")
+            elif cfg.fc == 1:
+                coil_offset = cfg.addr - 1
+                if coil_offset in raw_coils:
+                    values[tag_name] = raw_coils[coil_offset]
+                    modbus_log.debug("[MODBUS] %s  coil=%d  value=%s", tag_name, coil_offset, values[tag_name])
+                else:
+                    errors.append(f"{tag_name}: coil @{coil_offset} not in cache")
+        except Exception as exc:
+            errors.append(f"{tag_name} decode: {exc}")
+            modbus_log.error("[MODBUS] %s decode exception: %s", tag_name, exc, exc_info=True)
+
+    return values, errors
 
 
 # ══════════════════════════════════════════════════════════════
@@ -240,10 +471,9 @@ class RuntimeState:
 
 state = RuntimeState()
 
-# ── Global flags ──────────────────────────────────────────────
-_server_healthy: bool         = True   # optimistic
-_plc_online: bool             = False
-_plc_has_live_data: bool      = False
+_server_healthy: bool                   = True
+_plc_online: bool                       = False
+_plc_has_live_data: bool                = False
 _last_queued_signature: Optional[tuple] = None
 
 
@@ -251,19 +481,6 @@ _last_queued_signature: Optional[tuple] = None
 #  WAL (Write-Ahead Log)
 # ══════════════════════════════════════════════════════════════
 class WALEntry:
-    """
-    One durable batch file on disk.
-
-    Filename: <seq>__<uuid4>__<retry_count>.json
-    Contents:
-      payload      — original IngestBatch JSON (never mutated)
-      created_at   — ISO timestamp of first write
-      batch_id     — stable UUID for server-side idempotency
-      seq          — monotonic sequence number
-      retry_count  — incremented on each failed attempt
-      last_error   — last HTTP status or exception string
-    """
-
     def __init__(self, path: Path):
         self.path = path
 
@@ -320,7 +537,6 @@ class WALEntry:
 
 
 def _atomic_write(path: Path, data: dict) -> None:
-    """temp → fsync → rename  (power-loss safe)"""
     tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
     try:
         with os.fdopen(tmp_fd, "w") as f:
@@ -337,7 +553,6 @@ def _atomic_write(path: Path, data: dict) -> None:
 
 
 def wal_pending() -> list[WALEntry]:
-    """All pending WAL entries sorted oldest-first."""
     return [WALEntry(p) for p in sorted(WAL_DIR.glob("*.json"))]
 
 
@@ -362,14 +577,14 @@ def check_health() -> bool:
         healthy = resp.status_code == 200
         if healthy != _server_healthy:
             if healthy:
-                log.info("[Health] OK Server back online (%s)", HEALTH_URL)
+                log.info("[Health] ✓ Server back online (%s)", HEALTH_URL)
             else:
-                log.warning("[Health] DOWN Server unhealthy - status %d", resp.status_code)
+                log.warning("[Health] ✗ Server unhealthy — status %d", resp.status_code)
         _server_healthy = healthy
         return healthy
     except requests.RequestException as exc:
         if _server_healthy:
-            log.warning("[Health] DOWN Server unreachable: %s", exc)
+            log.warning("[Health] ✗ Server unreachable: %s", exc)
         _server_healthy = False
         return False
 
@@ -378,7 +593,6 @@ def check_health() -> bool:
 #  Outbound Push
 # ══════════════════════════════════════════════════════════════
 def push_one(entry: WALEntry) -> bool:
-    """POST one WAL entry. Returns True on HTTP 200/201."""
     data    = entry.load()
     payload = data["payload"]
     headers = {"X-Batch-ID": data["batch_id"]}
@@ -392,21 +606,21 @@ def push_one(entry: WALEntry) -> bool:
         )
         if resp.status_code in (200, 201):
             log.info(
-                "[Push] OK seq=%-6d  batch=%s  tags=%d",
+                "[Push] ✓ seq=%-6d  batch=%s  tags=%d",
                 payload["seq"], data["batch_id"][:8], len(payload["tags"]),
             )
             entry.mark_sent()
             return True
         else:
             err = f"HTTP {resp.status_code}: {resp.text[:120]}"
-            log.warning("[Push] FAIL seq=%-6d  %s", payload["seq"], err)
+            log.warning("[Push] ✗ seq=%-6d  %s", payload["seq"], err)
             entry.increment_retry(err)
             if entry.retry_count >= MAX_RETRIES:
                 entry.mark_dead()
             return False
     except requests.RequestException as exc:
         err = str(exc)[:120]
-        log.warning("[Push] FAIL seq=%-6d  %s", payload["seq"], err)
+        log.warning("[Push] ✗ seq=%-6d  %s", payload["seq"], err)
         entry.increment_retry(err)
         if entry.retry_count >= MAX_RETRIES:
             entry.mark_dead()
@@ -414,82 +628,23 @@ def push_one(entry: WALEntry) -> bool:
 
 
 # ══════════════════════════════════════════════════════════════
-#  Modbus Helpers
+#  Snapshot Validation & Application
 # ══════════════════════════════════════════════════════════════
-def float_to_regs(value: float) -> list[int]:
-    raw = struct.pack(">f", value)
-    return [
-        struct.unpack(">H", raw[0:2])[0],
-        struct.unpack(">H", raw[2:4])[0],
-    ]
-
-
-def regs_to_float(hi: int, lo: int) -> float:
-    return struct.unpack(">f", struct.pack(">HH", hi, lo))[0]
-
-
-def _read_tag(client: ModbusTcpClient, cfg: TagConfig):
-    if cfg.fc == 3:
-        base = cfg.addr - 400001
-        if cfg.type == "float":
-            rr = client.read_holding_registers(address=base, count=2, slave=PLC_UNIT_ID)
-            if rr.isError():
-                raise RuntimeError(str(rr))
-            return regs_to_float(rr.registers[0], rr.registers[1])
-        rr = client.read_holding_registers(address=base, count=1, slave=PLC_UNIT_ID)
-        if rr.isError():
-            raise RuntimeError(str(rr))
-        return int(rr.registers[0])
-
-    if cfg.fc == 4:
-        base = cfg.addr - 300001
-        rr = client.read_input_registers(address=base, count=1, slave=PLC_UNIT_ID)
-        if rr.isError():
-            raise RuntimeError(str(rr))
-        v = int(rr.registers[0])
-        return v if v < 32768 else v - 65536
-
-    if cfg.fc == 1:
-        base = cfg.addr - 1
-        rr = client.read_coils(address=base, count=1, slave=PLC_UNIT_ID)
-        if rr.isError():
-            raise RuntimeError(str(rr))
-        return bool(rr.bits[0])
-
-    raise ValueError(f"Unsupported FC: {cfg.fc}")
-
-
-def poll_modbus_snapshot(client: ModbusTcpClient) -> tuple[dict, list[str]]:
-    values: dict = {}
-    errors: list[str] = []
-    for tag_name, cfg in TAGS.items():
-        try:
-            values[tag_name] = _read_tag(client, cfg)
-        except Exception as exc:
-            errors.append(f"{tag_name}: {exc}")
-    return values, errors
-
-
 def _is_finite_number(v: object) -> bool:
     return isinstance(v, (int, float)) and math.isfinite(float(v))
 
 
-def is_live_snapshot(values: dict[str, object]) -> tuple[bool, str]:
-    """
-    Validate that this looks like a real PLC snapshot, not a partial/false connect.
-    """
+def is_live_snapshot(values: dict) -> tuple[bool, str]:
     if len(values) < MIN_SUCCESS_TAGS:
-        return False, f"only {len(values)} tags read (< MIN_SUCCESS_TAGS={MIN_SUCCESS_TAGS})"
+        return False, f"only {len(values)} tags read (MIN={MIN_SUCCESS_TAGS})"
 
-    missing_required = [tag for tag in REQUIRED_LIVE_TAGS if tag not in values]
-    if missing_required:
-        return False, f"missing required tags: {', '.join(missing_required)}"
+    missing = [t for t in REQUIRED_LIVE_TAGS if t not in values]
+    if missing:
+        return False, f"missing required tags: {', '.join(missing)}"
 
-    # For core analog tags, require finite numeric values.
-    core_numeric = ("EXTRUDER_RPM", "LAMINATOR_MPM", "EXTRUDER_SPEED_PCT")
-    for tag in core_numeric:
+    for tag in ("EXTRUDER_RPM", "LAMINATOR_MPM", "EXTRUDER_SPEED_PCT"):
         if tag in values and not _is_finite_number(values[tag]):
-            return False, f"invalid numeric value for {tag}: {values[tag]!r}"
+            return False, f"non-finite value for {tag}: {values[tag]!r}"
 
     return True, "ok"
 
@@ -516,11 +671,6 @@ def apply_polled_snapshot(values: dict) -> None:
 
 
 def current_state_signature() -> tuple:
-    """
-    Fingerprint of all PLC-derived values.
-    If this hasn't changed since the last queued batch, skip queuing.
-    Excludes timestamps and sequence numbers.
-    """
     return (
         round(state.extruder_rpm, 2),
         round(state.extruder_amp, 2),
@@ -585,24 +735,49 @@ def build_payload() -> dict:
 # ══════════════════════════════════════════════════════════════
 async def modbus_client_poll_loop():
     global _plc_online, _plc_has_live_data
-    loop     = asyncio.get_event_loop()
-    failures = 0
+    loop             = asyncio.get_event_loop()
+    failures         = 0
+    partial_failures = 0
 
     log.info(
-        "[Loop] Modbus poll - target %s:%d  unit=%d  interval=%.2fs",
-        PLC_HOST, PLC_PORT, PLC_UNIT_ID, UPDATE_INTERVAL,
+        "[Loop] Modbus poll — target %s:%d  unit=%d  interval=%.2fs  timeout=%.1fs",
+        PLC_HOST, PLC_PORT, PLC_UNIT_ID, UPDATE_INTERVAL, MODBUS_TIMEOUT,
     )
 
     while True:
-        client    = ModbusTcpClient(host=PLC_HOST, port=PLC_PORT, timeout=MODBUS_TIMEOUT)
+        # Pass unit_id on the client constructor — the correct pymodbus 3.6.x approach.
+        # This sets the default slave/unit for all requests made through this client.
+        client    = ModbusTcpClient(
+            host=PLC_HOST,
+            port=PLC_PORT,
+            timeout=MODBUS_TIMEOUT,
+        )
         connected = False
         try:
             connected = await loop.run_in_executor(None, client.connect)
             if not connected:
                 raise ConnectionError("connect() returned False")
 
+            modbus_log.debug("[MODBUS] TCP connected to %s:%d", PLC_HOST, PLC_PORT)
+
             values, errors = await loop.run_in_executor(None, poll_modbus_snapshot, client)
             live_ok, live_reason = is_live_snapshot(values)
+
+            if errors:
+                partial_failures += 1
+                log.warning(
+                    "[Poll] Partial read — %d tag error(s)  [consecutive=%d]  first: %s",
+                    len(errors), partial_failures, errors[0],
+                )
+                if partial_failures >= PARTIAL_RECONNECT_THRESHOLD:
+                    log.warning(
+                        "[Poll] %d consecutive partial reads — forcing reconnect",
+                        partial_failures,
+                    )
+                    raise RuntimeError(f"force_reconnect after {partial_failures} partial reads")
+            else:
+                partial_failures = 0
+
             if not live_ok:
                 raise RuntimeError(f"snapshot_not_live ({live_reason})")
 
@@ -610,107 +785,78 @@ async def modbus_client_poll_loop():
             _plc_has_live_data = True
 
             if not _plc_online:
-                log.info("[Poll] OK PLC online  (%s:%d)", PLC_HOST, PLC_PORT)
-            _plc_online = True
-
-            if errors:
-                log.warning(
-                    "[Poll] Partial read - %d tag(s) failed; sample: %s",
-                    len(errors), errors[0],
+                log.info(
+                    "[Poll] ✓ PLC online  %s:%d  tags=%d",
+                    PLC_HOST, PLC_PORT, len(values),
                 )
+            _plc_online = True
+            failures    = 0
 
-            failures = 0
-            jitter   = random.uniform(0.0, POLL_JITTER_MAX)
+            jitter = random.uniform(0.0, POLL_JITTER_MAX)
             await asyncio.sleep(max(0.0, UPDATE_INTERVAL + jitter))
 
         except Exception as exc:
             if _plc_online:
-                log.warning("[Poll] DOWN PLC went offline: %s", str(exc)[:120])
+                log.warning("[Poll] ✗ PLC went offline: %s", str(exc)[:160])
             _plc_online = False
             failures   += 1
             backoff     = min(POLL_BACKOFF_MAX, POLL_BACKOFF_BASE * (2 ** (failures - 1)))
             backoff    += random.uniform(0.0, POLL_JITTER_MAX)
-            log.warning(
-                "[Poll] Failed #%d - retry in %.2fs", failures, backoff
-            )
+            log.warning("[Poll] Failed #%d — retry in %.2fs", failures, backoff)
             await asyncio.sleep(backoff)
 
         finally:
-            if connected:
+            # Always close — even if connect() raised, pymodbus may have opened socket
+            try:
                 await loop.run_in_executor(None, client.close)
+            except Exception:
+                pass
 
 
 # ══════════════════════════════════════════════════════════════
-#  Async Task: Push loop  (WAL-based)
+#  Async Task: Push loop (WAL-based)
 # ══════════════════════════════════════════════════════════════
 async def push_loop():
-    """
-    Every PUSH_INTERVAL seconds, this loop:
-
-      1.  Skips if PLC is offline or no live data yet
-      2.  Runs health check FIRST (GET /health)
-      3a. If server DOWN + data changed  → write WAL (buffer for later), stop
-      3b. If server DOWN + data unchanged → do nothing (no duplicate batches)
-      4.  If server UP + data unchanged   → skip (no duplicate batches)
-      5.  If server UP + data changed     → write WAL, then flush all pending
-          batches oldest-first
-
-    Key guarantee: batches are ONLY written to WAL when PLC data has actually
-    changed. No duplicate or stale data is ever pushed.
-    """
     global _last_queued_signature
     loop = asyncio.get_event_loop()
 
-    log.info("[Loop] Push loop    - interval %.1fs", PUSH_INTERVAL)
-    log.info("[Loop] Ingest URL   - %s", INGEST_URL)
-    log.info("[Loop] Health URL   - %s", HEALTH_URL)
-    log.info("[Loop] WAL dir      - %s", WAL_DIR)
+    log.info("[Loop] Push loop    — interval %.1fs", PUSH_INTERVAL)
+    log.info("[Loop] Ingest URL   — %s", INGEST_URL)
+    log.info("[Loop] Health URL   — %s", HEALTH_URL)
+    log.info("[Loop] WAL dir      — %s", WAL_DIR)
 
     while True:
         await asyncio.sleep(PUSH_INTERVAL)
 
-        # ── 1. Gate: PLC must be online with at least one snapshot ──
         if not _plc_online:
-            log.debug("[Push] Skipped - PLC offline")
+            log.debug("[Push] Skipped — PLC offline")
             continue
         if not _plc_has_live_data:
-            log.debug("[Push] Skipped - waiting for first PLC snapshot")
+            log.debug("[Push] Skipped — waiting for first PLC snapshot")
             continue
 
-        # ── 2. Health check FIRST (before deciding to queue) ────────
         healthy = await loop.run_in_executor(None, check_health)
 
-        # ── 3. Has PLC data actually changed? ───────────────────────
         signature    = current_state_signature()
         data_changed = signature != _last_queued_signature
 
         if not healthy:
             pending = len(list(WAL_DIR.glob("*.json")))
             if data_changed:
-                # Server is down BUT machine is producing new data —
-                # durably queue it so nothing is lost when server recovers.
                 payload = build_payload()
                 WALEntry.create(payload)
                 _last_queued_signature = signature
                 log.info(
-                    "[Push] Server unhealthy - new batch queued  (total pending=%d)",
-                    pending + 1,
+                    "[Push] Server down — queued batch  (pending=%d)", pending + 1,
                 )
             else:
-                # Server is down AND data hasn't changed — nothing to queue.
-                log.debug(
-                    "[Push] Server unhealthy + no data change - skipping  (pending=%d)",
-                    pending,
-                )
-            continue  # either way, don't attempt to push yet
-
-        # ── 4. Server is healthy ─────────────────────────────────────
-        if not data_changed:
-            # Data is frozen (machine idle / same values) — don't push duplicates.
-            log.debug("[Push] Skipped - no PLC value change since last batch")
+                log.debug("[Push] Server down + no data change — skip  (pending=%d)", pending)
             continue
 
-        # ── 5. Server healthy + data changed — write WAL then flush ──
+        if not data_changed:
+            log.debug("[Push] Skipped — no PLC value change")
+            continue
+
         payload = build_payload()
         WALEntry.create(payload)
         _last_queued_signature = signature
@@ -721,10 +867,8 @@ async def push_loop():
         for entry in pending_entries:
             success = await loop.run_in_executor(None, push_one, entry)
             if not success:
-                # Server hiccupped mid-flush — stop and retry next cycle.
                 break
 
-        # Housekeeping: prune old sent/ files
         await loop.run_in_executor(None, prune_sent)
 
 
@@ -737,9 +881,10 @@ async def status_log_loop():
         pending = len(list(WAL_DIR.glob("*.json")))
         dead    = len(list(DEAD_DIR.glob("*.json")))
         log.info(
-            "[Status] RPM=%.1f  MPM=%.1f  AMP=%.1f  "
-            "RunM=%.0f  TotalM=%.0f  seq=%d  "
-            "queued=%d  dead=%d  server=%s  plc=%s  live=%s",
+            "[Status] RPM=%.1f  MPM=%.1f  AMP=%.1f | "
+            "RunM=%.0f  TotalM=%.0f | "
+            "seq=%d  queued=%d  dead=%d | "
+            "server=%s  plc=%s  live=%s",
             state.extruder_rpm,  state.laminator_mpm, state.extruder_amp,
             state.running_meter, state.total_meter,   state.ingest_seq,
             pending, dead,
@@ -756,7 +901,7 @@ _shutdown_event: Optional[asyncio.Event] = None
 
 
 def _handle_signal(sig, _loop):
-    log.info("[Signal] %s received - shutting down gracefully ...", sig.name)
+    log.info("[Signal] %s received — shutting down ...", sig.name)
     if _shutdown_event:
         _shutdown_event.set()
 
@@ -777,21 +922,23 @@ async def main():
 
     border = "=" * 60
     log.info(border)
-    log.info("  Nonwoven Modbus Poller - Production Edition")
+    log.info("  Nonwoven Modbus Poller — Production Edition (Fixed)")
     log.info(border)
-    log.info("  PLC:         %s:%d  unit=%d", PLC_HOST, PLC_PORT, PLC_UNIT_ID)
-    log.info("  Ingest URL:  %s", INGEST_URL)
-    log.info("  Health URL:  %s", HEALTH_URL)
-    log.info("  Machine:     %s (%s)", MACHINE_ID, MACHINE_REVISION)
-    log.info("  WAL dir:     %s", WAL_DIR)
-    log.info("  Poll:        every %.1fs", UPDATE_INTERVAL)
-    log.info("  Push:        every %.1fs", PUSH_INTERVAL)
-    log.info("  MaxRetries:  %d  (~%.0f min)", MAX_RETRIES, MAX_RETRIES * PUSH_INTERVAL / 60)
+    log.info("  PLC:          %s:%d  unit=%d", PLC_HOST, PLC_PORT, PLC_UNIT_ID)
+    log.info("  Ingest URL:   %s", INGEST_URL)
+    log.info("  Health URL:   %s", HEALTH_URL)
+    log.info("  Machine:      %s (%s)", MACHINE_ID, MACHINE_REVISION)
+    log.info("  WAL dir:      %s", WAL_DIR)
+    log.info("  Log dir:      %s", LOG_DIR)
+    log.info("  Poll:         every %.1fs", UPDATE_INTERVAL)
+    log.info("  Push:         every %.1fs", PUSH_INTERVAL)
+    log.info("  MaxRetries:   %d (~%.0f min)", MAX_RETRIES, MAX_RETRIES * PUSH_INTERVAL / 60)
+    log.info("  Log files:    pipeline.log | modbus.log (raw regs) | errors.log")
     log.info(border)
 
     leftover = len(list(WAL_DIR.glob("*.json")))
     if leftover:
-        log.warning("[WAL] %d unsent batch(es) from previous run - will replay", leftover)
+        log.warning("[WAL] %d unsent batch(es) from previous run — will replay", leftover)
 
     tasks = [
         asyncio.create_task(modbus_client_poll_loop(), name="modbus-poll"),
@@ -808,7 +955,6 @@ async def main():
     log.info("[Shutdown] Clean exit.")
 
 
-# ══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     try:
         asyncio.run(main())

@@ -22,7 +22,10 @@
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:stop": "pm2 stop rvl-backend || true",
     "pm2:logs": "pm2 logs rvl-backend",
-    "sim": "npm run simulate -w apps/backend"
+    "sim": "npm run simulate -w apps/backend",
+    "tunnel:front": "lt --port 3000 --subdomain myapp",
+    "tunnel:back": "ngrok http 7000",
+    "production:start": "cd production_deployment && npm start"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

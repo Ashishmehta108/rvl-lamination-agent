@@ -181,7 +181,7 @@ class TagConfig:
 
 
 TAGS: dict[str, TagConfig] = {
-    "EXTRUDER_RPM":        TagConfig(addr=401104, type="float",  fc=3),
+    "EXTRUDER_RPM":        TagConfig(addr=401104, type="float",  fc=3), 
     "EXTRUDER_AMP":        TagConfig(addr=401108, type="float",  fc=3),
     "EXTRUDER_SPEED_PCT":  TagConfig(addr=400001, type="uint16", fc=3),
     "EXTRUDER_ON_OFF":     TagConfig(addr=100,    type="bool",   fc=1),
