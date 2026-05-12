@@ -35,8 +35,6 @@ import {
   toBedrockMessages
 } from "./bedrock.js";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 type StoredChatMessage = {
   role: "user" | "assistant" | "system";
   content: string;
