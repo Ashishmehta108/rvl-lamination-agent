@@ -76,6 +76,15 @@ export const config = {
   llmTargetMaxHistoryMessages: getEnvNum("LLM_TARGET_MAX_HISTORY_MESSAGES", 6),
   llmStrictGrounding: getEnvBool("LLM_STRICT_GROUNDING", true),
 
+  /** Heuristic plan step: model = one small JSON classification LLM call; regex = patterns only */
+  queryClassifierMode: (() => {
+    const m = getEnv("QUERY_CLASSIFIER_MODE", "model").toLowerCase();
+    return m === "regex" ? "regex" : "model";
+  })() as "model" | "regex",
+  queryClassifierTimeoutMs: getEnvNum("QUERY_CLASSIFIER_TIMEOUT_MS", 5000),
+  /** Second small LLM call for diagnostic plans: ordered tool steps JSON */
+  queryDecomposerTimeoutMs: getEnvNum("QUERY_DECOMPOSER_TIMEOUT_MS", 8000),
+
   /** Scheduled / narrative reports (defaults to chat model if unset) */
   ollamaReportModel: (() => {
     const r = process.env["OLLAMA_REPORT_MODEL"];
@@ -100,6 +109,7 @@ export const config = {
   // Security
   mcpAuthToken: getEnv("MCP_AUTH_TOKEN", "dev-local-token"),
   apiAuthToken: getEnv("API_AUTH_TOKEN", "dev-local-token"),
+  jwtSecret: getEnv("JWT_SECRET", "dev-jwt-secret-change-in-production"),
   enableCors: getEnvBool("ENABLE_CORS", true),
 
   // Files

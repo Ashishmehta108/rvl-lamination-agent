@@ -4,8 +4,10 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import websocket from "@fastify/websocket";
+import fjwt from "@fastify/jwt";
 import { config } from "./config.js";
 import { log } from "./log.js";
+import { registerAuthRoutes } from "./routes/auth.js";
 import { registerIngestRoutes } from "./routes/ingest.js";
 import { registerQueryRoutes } from "./routes/query.js";
 import { registerChatRoutes } from "./routes/chat.js";
@@ -33,6 +35,7 @@ async function main() {
     timeWindow: "1 minute"
   });
   await app.register(websocket);
+  await app.register(fjwt, { secret: config.jwtSecret });
 
   app.get("/health", async () => ({ ok: true, service: "backend", time: new Date().toISOString() }));
   app.get("/ready", async (_req, reply) => {
@@ -96,6 +99,7 @@ async function main() {
 
   await registerIngestRoutes(app as any);
   await registerQueryRoutes(app as any);
+  await app.register(registerAuthRoutes, { prefix: "/auth" });
   await app.register(registerChatRoutes, { prefix: "/chat" });
   await registerMlRoutes(app as any);
   await registerEmailRoutes(app as any);

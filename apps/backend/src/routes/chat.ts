@@ -12,8 +12,9 @@
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, lt, sql } from "drizzle-orm";
 import { newId } from "@rvl/shared";
-import { requireApiAuth, validateMachineAccess } from "../auth.js";
-import { runGeminiAgent, type AgentTrace } from "../ai/agent.js";
+import { requireAuth } from "./auth.js";
+import { validateMachineAccess } from "../auth.js";
+import { runAgent, type AgentTrace } from "../ai/agent.js";
 import { getPostgresDb, schema } from "../db/postgres.js";
 import { migrateChatTables } from "../db/migrations/chat.js";
 import {
@@ -73,8 +74,8 @@ export async function registerChatRoutes(app: FastifyInstance) {
   await migrateChatTables();
 
   // POST / — Send a message, run agent, persist, return reply
-  app.post("/", { schema: postChatFastifySchema }, async (req, reply) => {
-    requireApiAuth(req);
+  app.post("/", { schema: postChatFastifySchema, preHandler: requireAuth }, async (req, reply) => {
+    const { userId, tenantId } = req.jwtUser!;
 
     const parsed = postChatBodySchema.safeParse(req.body);
     if (!parsed.success) {
@@ -102,6 +103,7 @@ export async function registerChatRoutes(app: FastifyInstance) {
           .where(
             and(
               eq(schema.chatSessions.id, sessionId),
+              eq(schema.chatSessions.tenantId, tenantId),
               sql`${schema.chatSessions.deletedAt} is null`
             )
           );
@@ -124,6 +126,8 @@ export async function registerChatRoutes(app: FastifyInstance) {
         await db.insert(schema.chatSessions).values({
           id: sessionId,
           machineId,
+          userId,
+          tenantId,
           title: titleFromMessage(message),
           createdAt: now,
           updatedAt: now,
@@ -137,9 +141,9 @@ export async function registerChatRoutes(app: FastifyInstance) {
     }
 
     // ── Agent execution ────────────────────────────────────────────────────
-    let agentResult: Awaited<ReturnType<typeof runGeminiAgent>>;
+    let agentResult: Awaited<ReturnType<typeof runAgent>>;
     try {
-      agentResult = await runGeminiAgent({
+      agentResult = await runAgent({
         userMessage: message,
         history,
         machineId,
@@ -223,9 +227,9 @@ export async function registerChatRoutes(app: FastifyInstance) {
   });
 
 
-  // GET /sessions — List sessions for a machine
-  app.get("/sessions", { schema: getChatSessionsFastifySchema }, async (req, reply) => {
-    requireApiAuth(req);
+  // GET /sessions — List sessions for a machine (scoped to tenant)
+  app.get("/sessions", { schema: getChatSessionsFastifySchema, preHandler: requireAuth }, async (req, reply) => {
+    const { tenantId } = req.jwtUser!;
     const parsed = chatSessionsQuerySchema.safeParse(req.query);
     if (!parsed.success) {
       return reply.code(400).send({ error: "invalid_request", detail: parsed.error.issues });
@@ -246,6 +250,7 @@ export async function registerChatRoutes(app: FastifyInstance) {
         .leftJoin(schema.chatMessages, eq(schema.chatMessages.sessionId, schema.chatSessions.id))
         .where(
           and(
+            eq(schema.chatSessions.tenantId, tenantId),
             eq(schema.chatSessions.machineId, parsed.data.machineId),
             sql`${schema.chatSessions.deletedAt} is null`
           )
@@ -270,9 +275,9 @@ export async function registerChatRoutes(app: FastifyInstance) {
   // GET /sessions/:sessionId/messages — Paginated message history
   app.get(
     "/sessions/:sessionId/messages",
-    { schema: getChatMessagesFastifySchema },
+    { schema: getChatMessagesFastifySchema, preHandler: requireAuth },
     async (req, reply) => {
-      requireApiAuth(req);
+      const { tenantId } = req.jwtUser!;
       const params = chatMessagesParamsSchema.safeParse(req.params);
       const query = chatMessagesQuerySchema.safeParse(req.query);
       if (!params.success || !query.success) {
@@ -286,6 +291,7 @@ export async function registerChatRoutes(app: FastifyInstance) {
           .where(
             and(
               eq(schema.chatSessions.id, params.data.sessionId),
+              eq(schema.chatSessions.tenantId, tenantId),
               sql`${schema.chatSessions.deletedAt} is null`
             )
           );
@@ -338,12 +344,12 @@ export async function registerChatRoutes(app: FastifyInstance) {
     }
   );
 
-  // DELETE /sessions/:sessionId — Soft delete
+  // DELETE /sessions/:sessionId — Soft delete (owner only)
   app.delete(
     "/sessions/:sessionId",
-    { schema: deleteChatSessionFastifySchema },
+    { schema: deleteChatSessionFastifySchema, preHandler: requireAuth },
     async (req, reply) => {
-      requireApiAuth(req);
+      const { userId, tenantId } = req.jwtUser!;
       const parsed = deleteChatSessionParamsSchema.safeParse(req.params);
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid_request", detail: parsed.error.issues });
@@ -353,7 +359,13 @@ export async function registerChatRoutes(app: FastifyInstance) {
         const result = await getPostgresDb()
           .update(schema.chatSessions)
           .set({ deletedAt: new Date(), updatedAt: new Date() })
-          .where(eq(schema.chatSessions.id, parsed.data.sessionId))
+          .where(
+            and(
+              eq(schema.chatSessions.id, parsed.data.sessionId),
+              eq(schema.chatSessions.userId, userId),
+              eq(schema.chatSessions.tenantId, tenantId)
+            )
+          )
           .returning({ id: schema.chatSessions.id });
 
         if (!result.length) return reply.code(404).send({ error: "session_not_found" });

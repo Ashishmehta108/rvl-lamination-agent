@@ -105,3 +105,23 @@ model TagSample {
 
   @@index([machineId, tagId, ts])
 }
+
+
+
+model AlertEvent {
+  id          String   @id @map("_id")
+  machineId   String
+  tagId       String
+  slug        String
+  severity    String   // "warn" | "alarm"
+  direction   String   // "high" | "low"
+  value       Float
+  threshold   Float
+  acknowledgedAt DateTime?
+  resolvedAt  DateTime?
+  dedupeKey   String   @unique
+  createdAt   DateTime @default(now())
+
+  @@index([machineId, tagId])
+  @@index([machineId, createdAt])
+}

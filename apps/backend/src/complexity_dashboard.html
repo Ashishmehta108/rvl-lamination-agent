@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RVL Backend | High Complexity Audit</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0c10;
+            --card-bg: rgba(22, 27, 34, 0.7);
+            --border: rgba(255, 255, 255, 0.1);
+            --accent: #58a6ff;
+            --text: #e6edf3;
+            --text-dim: #8b949e;
+            --on: #d29922;
+            --on2: #f85149;
+            --glass: blur(12px) saturate(180%);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body { background-color: var(--bg); color: var(--text); font-family: 'Outfit', sans-serif; padding: 40px 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        header { margin-bottom: 40px; text-align: center; }
+        h1 { font-size: 2.5rem; background: linear-gradient(135deg, #fff 0%, #58a6ff 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .subtitle { color: var(--text-dim); }
+
+        .audit-list { display: flex; flex-direction: column; gap: 20px; }
+        .audit-card { background: var(--card-bg); backdrop-filter: var(--glass); border: 1px solid var(--border); border-radius: 20px; padding: 24px; }
+        .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+        .func-info h2 { font-family: 'JetBrains Mono', monospace; font-size: 1.1rem; color: var(--accent); }
+        .file-meta { font-size: 0.8rem; color: var(--text-dim); }
+        .complexity-badge { padding: 6px 12px; border-radius: 8px; font-weight: 700; font-size: 0.8rem; background: rgba(210, 153, 34, 0.15); color: var(--on); border: 1px solid rgba(210, 153, 34, 0.3); }
+        .complexity-badge.complex { background: rgba(248, 81, 73, 0.15); color: var(--on2); border: 1px solid rgba(248, 81, 73, 0.3); }
+        .description { font-size: 0.9rem; color: var(--text-dim); margin-bottom: 16px; }
+        .code-block { background: #0d1117; border-radius: 12px; padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; border: 1px solid var(--border); position: relative; }
+        pre { white-space: pre-wrap; word-break: break-all; color: #d1d5db; }
+        .copy-btn { position: absolute; top: 10px; right: 10px; background: var(--border); border: none; color: var(--text-dim); padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.7rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>High Complexity Code Audit</h1>
+            <p class="subtitle">Complete Procedural Map of O(N) and Complex AI Pathwaays</p>
+        </header>
+        <div class="audit-list" id="auditList"></div>
+    </div>
+    <script>
+        const auditData = [
+  {
+    "file": "apps/backend/src/ai/tools.ts",
+    "function": "summarizeNumbers",
+    "complexity": "O(N)",
+    "description": "Calculates min, max, avg, and stdDev in linear time.",
+    "code": "function summarizeNumbers(values: number[]) {\n  if (!values.length) return { min: null, max: null, avg: null, stdDev: null };\n  const min = Math.min(...values);\n  const max = Math.max(...values);\n  const avg = values.reduce((sum, value) => sum + value, 0) / values.length;\n  const variance =\n    values.reduce((sum, value) => sum + (value - avg) ** 2, 0) / values.length;\n  return { min, max, avg, stdDev: Math.sqrt(variance) };\n}"
+  },
+  {
+    "file": "apps/backend/src/ai/tools.ts",
+    "function": "getDerivedThresholdAlerts",
+    "complexity": "O(S * D)",
+    "description": "Processes up to 20k samples against 500 definitions to derive threshold breaches.",
+    "code": "async function getDerivedThresholdAlerts(args) {\n  const samples = await prisma.tagSample.findMany({ take: 20_000 });\n  const byTag = new Map();\n  for (const sample of samples) {\n    const breach = breachForValue(def, sample.valueNumber);\n    if (breach) updateStats(byTag, sample, breach);\n  }\n  return Array.from(byTag.values());\n}"
+  },
+  {
+    "file": "apps/backend/src/ai/tools.ts",
+    "function": "getAllLiveTags",
+    "complexity": "O(D)",
+    "description": "Iterates through 500+ tag definitions to group and evaluate live status.",
+    "code": "async function getAllLiveTags(args) {\n  const definitions = await prisma.tagDefinition.findMany({ take: 500 });\n  const latest = await latestByTagId(machineId, definitions.map(d => d.tagId));\n  for (const def of definitions) {\n    const row = latest.get(def.tagId);\n    grouped[subsystemFor(def.slug)].push(row);\n  }\n  return grouped;\n}"
+  },
+  {
+    "file": "apps/backend/src/ai/tools.ts",
+    "function": "getTagHistory",
+    "complexity": "O(L)",
+    "description": "Fetches and processes historical samples up to the limit L.",
+    "code": "async function getTagHistory(args) {\n  const rows = await prisma.tagSample.findMany({ take: limit });\n  const samples = rows.map(row => ({ ts: row.ts, value: tagValue(row) }));\n  const stats = summarizeNumbers(numbers);\n  return { tag, samples, ...stats };\n}"
+  },
+  {
+    "file": "apps/backend/src/ai/tools.ts",
+    "function": "getAlertHistory",
+    "complexity": "O(L + Derived)",
+    "description": "Retrieves L alerts and merges with derived threshold breaches.",
+    "code": "async function getAlertHistory(args) {\n  const rows = await db.select().from(schema.alertEvents).limit(limit);\n  const derived = await getDerivedThresholdAlerts(args);\n  return { alerts: rows, derivedAlerts: derived };\n}"
+  },
+  {
+    "file": "apps/backend/src/ai/tools.ts",
+    "function": "detectAnomalies",
+    "complexity": "O(N)",
+    "description": "State-machine pass over sample series to identify threshold breaches.",
+    "code": "function detectAnomalies(samples, def) {\n  for (const sample of samples) {\n    const breach = breachForValue(def, sample.value);\n    if (breach && !inBreach) anomalies.push(sample);\n  }\n  return anomalies;\n}"
+  },
+  {
+    "file": "apps/backend/src/ai/tools.ts",
+    "function": "getTagComparison",
+    "complexity": "O(T * L)",
+    "description": "Fetches and processes T tags with L samples.",
+    "code": "async function getTagComparison(args) {\n  const seriesData = await Promise.all(defs.map(d => fetch(d)));\n  const summary = defs.map((d, i) => analyze(seriesData[i]));\n  return { summary };\n}"
+  },
+  {
+    "file": "apps/backend/src/ai/agent.ts",
+    "function": "classifyQuery",
+    "complexity": "O(M)",
+    "description": "Regex-based intent classification on user message.",
+    "code": "function classifyQuery(msg) {\n  if (/production/.test(msg)) return 'production';\n  if (/yesterday/.test(msg)) return 'historical';\n  return 'current';\n}"
+  },
+  {
+    "file": "apps/backend/src/ai/agent.ts",
+    "function": "downsampleSeries",
+    "complexity": "O(N)",
+    "description": "Bucket averaging to reduce point count for charts.",
+    "code": "function downsampleSeries(data, max = 500) {\n  const size = Math.ceil(data.length / max);\n  for (let i = 0; i < data.length; i += size) {\n    result.push(avg(data.slice(i, i + size)));\n  }\n  return result;\n}"
+  },
+  {
+    "file": "apps/backend/src/ai/bedrock.ts",
+    "function": "normalizeSchema",
+    "complexity": "O(D)",
+    "description": "Recursive normalization of JSON schemas.",
+    "code": "function normalizeSchema(input) {\n  if (typeof input !== 'object') return input;\n  return mapValues(input, normalizeSchema);\n}"
+  },
+  {
+    "file": "apps/backend/src/ai/bedrock.ts",
+    "function": "toBedrockMessages",
+    "complexity": "O(H)",
+    "description": "Linear mapping of chat history.",
+    "code": "function toBedrockMessages(history, msg) {\n  return history.map(h => normalize(h)).concat(normalize(msg));\n}"
+  },
+  {
+    "file": "apps/backend/src/workers/reportRunner.ts",
+    "function": "buildTrendData",
+    "complexity": "O(S)",
+    "description": "Linear pass over thousands of telemetry samples.",
+    "code": "async function buildTrendData(machineId, start, end) {\n  const samples = await prisma.tagSample.findMany({ take: 10000 });\n  for (const s of samples) byTag.get(s.tagId).push(s.value);\n  return defs.map(d => summarize(byTag.get(d.tagId)));\n}"
+  },
+  {
+    "file": "apps/backend/src/ai/agent.ts",
+    "function": "runBedrockPipeline",
+    "complexity": "Complex",
+    "description": "Multi-round recursive reasoning loop.",
+    "code": "async function runBedrockPipeline(args) {\n  for (let r = 0; r < 8; r++) {\n    const resp = await llm(msgs);\n    if (!resp.tools) break;\n    msgs.push(await runTools(resp.tools));\n  }\n}"
+  },
+  {
+    "file": "apps/backend/src/workers/reportRunner.ts",
+    "function": "registerReportRunner",
+    "complexity": "Complex",
+    "description": "Orchestrates 7 sequential LLM rounds.",
+    "code": "async function registerReportRunner(boss) {\n  await boss.work(job => {\n    const steps = ['overview', 'production', 'alerts', 'tags', 'trends', 'risks', 'recs'];\n    for (const s of steps) await runStep(s);\n  });\n}"
+  }
+];
+
+        const auditList = document.getElementById('auditList');
+        function render() {
+            auditList.innerHTML = auditData.map(item => `
+                <div class="audit-card">
+                    <div class="card-header">
+                        <div class="func-info">
+                            <h2>${item.function}</h2>
+                            <div class="file-meta">${item.file}</div>
+                        </div>
+                        <span class="complexity-badge ${item.complexity === 'Complex' ? 'complex' : ''}">${item.complexity}</span>
+                    </div>
+                    <div class="description">${item.description}</div>
+                    <div class="code-block">
+                        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                        <pre><code>${item.code}</code></pre>
+                    </div>
+                </div>
+            `).join('');
+        }
+        window.copyCode = (btn) => {
+            navigator.clipboard.writeText(btn.nextElementSibling.innerText);
+            btn.innerText = 'Copied!';
+            setTimeout(() => btn.innerText = 'Copy', 2000);
+        };
+        render();
+    </script>
+</body>
+</html>

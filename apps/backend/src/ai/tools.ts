@@ -55,6 +55,7 @@ export const TOOL_NAMES = [
   "get_machine_status",
   "acknowledge_alert",
   "get_chat_sessions",
+  "get_tag_comparison",
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -219,16 +220,27 @@ function subsystemFor(slug: string, department: string | null): string {
     return "safety";
   return "production";
 }
-
 function summarizeNumbers(values: number[]) {
   if (!values.length) return { min: null, max: null, avg: null, stdDev: null };
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const avg = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const variance =
-    values.reduce((sum, value) => sum + (value - avg) ** 2, 0) / values.length;
-  return { min, max, avg, stdDev: Math.sqrt(variance) };
+  
+  let min = values[0]!;
+  let max = values[0]!;
+  let sum = 0;
+
+  for (const v of values) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+    sum += v;
+  }
+
+  const avg = sum / values.length;
+  let variance = 0;
+  for (const v of values) variance += (v - avg) ** 2;
+
+  return { min, max, avg, stdDev: Math.sqrt(variance / values.length) };
 }
+
+
 
 async function findDefinitionsBySlugs(
   machineId: string,
@@ -558,35 +570,43 @@ async function getAllLiveTags(args: ToolArgs, defaultMachineId: string) {
     production: [],
     safety: [],
   };
+  // Build attention list in the same pass — avoids a second .flat() + .filter()
+  // and computes subsystemFor only once per tag instead of twice.
+  const attention: JsonRecord[] = [];
   for (const def of definitions) {
     const row = latest.get(def.tagId) ?? null;
     const value = tagValue(row);
     const stale = isStale(def, row);
     const status = stale ? "stale" : computeStatus(def, value);
-    grouped[subsystemFor(def.slug, def.department)]?.push({
+    const subsystem = subsystemFor(def.slug, def.department);
+    const ts = row?.ts.toISOString() ?? null;
+    const thresholds = thresholdText(def);
+    const displayValue = formatTagValue(def, value);
+
+    grouped[subsystem]?.push({
       slug: def.slug,
       name: def.name,
       value,
-      displayValue: formatTagValue(def, value),
+      displayValue,
       unit: def.unit,
       status,
-      ts: row?.ts.toISOString() ?? null,
+      ts,
       isStale: stale,
-      thresholds: thresholdText(def),
+      thresholds,
     });
+
+    if (status !== "normal") {
+      attention.push({
+        subsystem,
+        slug: def.slug,
+        name: def.name,
+        displayValue,
+        status,
+        thresholds,
+        ts,
+      });
+    }
   }
-  const attention = Object.values(grouped)
-    .flat()
-    .filter((tag) => tag.status !== "normal")
-    .map((tag) => ({
-      subsystem: subsystemFor(String(tag.slug), null),
-      slug: tag.slug,
-      name: tag.name,
-      displayValue: tag.displayValue,
-      status: tag.status,
-      thresholds: tag.thresholds,
-      ts: tag.ts,
-    }));
   return {
     machineId,
     capturedAt: new Date().toISOString(),
@@ -603,9 +623,9 @@ async function getTagHistory(args: ToolArgs, defaultMachineId: string) {
     return {
       error: `Tag not found: ${query}. Use search_tags to find available tags.`,
     };
-  const to = textArg(args, "to")
-    ? parseTime(textArg(args, "to"), 0)
-    : new Date();
+  // Read "to" arg once — avoids calling textArg twice (truthy check + value).
+  const toInput = textArg(args, "to");
+  const to = toInput ? parseTime(toInput, 0) : new Date();
   const from = parseTime(textArg(args, "from", "1h"), 3_600_000);
   const limit = numberArg(args, "limit", 200, 1000);
   const prisma = getPrismaClient();
@@ -615,15 +635,15 @@ async function getTagHistory(args: ToolArgs, defaultMachineId: string) {
     orderBy: { ts: "asc" },
     take: limit,
   });
-  const samples = rows.map((row) => ({
-    ts: row.ts.toISOString(),
-    value: tagValue(row),
-  }));
-  const stats = summarizeNumbers(
-    samples
-      .map((sample) => sample.value)
-      .filter((value): value is number => typeof value === "number"),
-  );
+  // Collect numeric values in the same pass as building samples —
+  // eliminates the second .map().filter() chain over the samples array.
+  const numbers: number[] = [];
+  const samples = rows.map((row) => {
+    const value = tagValue(row);
+    if (typeof value === "number") numbers.push(value);
+    return { ts: row.ts.toISOString(), value };
+  });
+  const stats = summarizeNumbers(numbers);
   return {
     tag: { slug: def.slug, name: def.name, unit: def.unit },
     samples,
@@ -754,20 +774,32 @@ async function getAlertHistory(args: ToolArgs, defaultMachineId: string) {
     const allowed = new Set(tags.map((tag) => tag.alertEventId));
     rows = rows.filter((row) => allowed.has(row.id));
   }
+  const includeSampleDerived = isTrueValue(args["includeSampleDerivedThresholds"]);
+  const excludeSampleDerived = args["includeSampleDerivedThresholds"] === false;
+  const sampleDerivedMode = excludeSampleDerived
+    ? "off"
+    : includeSampleDerived
+      ? "on"
+      : "auto";
+  const shouldDeriveFromSamples =
+    !excludeSampleDerived && (includeSampleDerived || rows.length === 0);
   const alerts = await alertRowsWithTags(rows);
-  const derivedAlerts = await getDerivedThresholdAlerts({
-    machineId,
-    from,
-    to,
-    severity,
-    tagSlug,
-    limit,
-  });
+  const derivedAlerts = shouldDeriveFromSamples
+    ? await getDerivedThresholdAlerts({
+        machineId,
+        from,
+        to,
+        severity,
+        tagSlug,
+        limit,
+      })
+    : [];
   return {
     query: {
       machineId,
       from: from.toISOString(),
       to: to.toISOString(),
+      sampleDerivedThresholds: sampleDerivedMode,
       timezoneAssumption:
         isDateOnly(fromInput) || isDateOnly(toInput)
           ? "date-only inputs interpreted as full Asia/Kolkata local days"
@@ -776,11 +808,15 @@ async function getAlertHistory(args: ToolArgs, defaultMachineId: string) {
     total: alerts.length,
     derivedTotal: derivedAlerts.length,
     note:
-      alerts.length === 0 && derivedAlerts.length > 0
-        ? "No persisted alert_events rows were found, but threshold breaches were derived from TagSample history for this window. This usually means the alert detection worker/queue did not persist events at that time."
-        : alerts.length === 0
-          ? "No persisted alert_events rows or threshold breaches were found for this machine and window."
-          : undefined,
+      !shouldDeriveFromSamples && rows.length > 0
+        ? "Sample-derived threshold scan was skipped because persisted alert_events matched this query (saves a large Mongo TagSample read). Pass includeSampleDerivedThresholds=true only if you must also recompute breaches from raw samples alongside stored events."
+        : !shouldDeriveFromSamples && rows.length === 0
+          ? "No persisted alert_events rows for this window, and sample-derived threshold scan was disabled (includeSampleDerivedThresholds=false)."
+          : alerts.length === 0 && derivedAlerts.length > 0
+            ? "No persisted alert_events rows were found, but threshold breaches were derived from TagSample history for this window. This usually means the alert detection worker/queue did not persist events at that time."
+            : alerts.length === 0
+              ? "No persisted alert_events rows or threshold breaches were found for this machine and window."
+              : undefined,
     bySeverity: {
       info: alerts.filter((alert) => alert.severity === "info").length,
       warning:
@@ -994,9 +1030,245 @@ async function getMachineStatus(args: ToolArgs, defaultMachineId: string) {
       },
     },
     openAlerts: openCount?.value ?? 0,
-    lastDataAt: latestTs ? new Date(latestTs).toISOString() : null,
+lastDataAt: latestTs ? new Date(latestTs).toISOString() : null,
   };
 }
+
+
+// ── Boolean tag guard ─────────────────────────────────────────────────────────
+const BOOLEAN_TAG_SUFFIXES = ["_FAULT", "_ON_OFF"] as const;
+const BOOLEAN_TAG_EXACT = ["EMG_STOP", "ALARM_IND"] as const;
+
+function isBooleanTag(slug: string): boolean {
+  return (
+    BOOLEAN_TAG_SUFFIXES.some((s) => slug.endsWith(s)) ||
+    (BOOLEAN_TAG_EXACT as readonly string[]).includes(slug)
+  );
+}
+
+// ── detectAnomalies ───────────────────────────────────────────────────────────
+/**
+ * Detects threshold-breach anomalies in a numeric sample series.
+ *
+ * State machine: tracks contiguous breach windows and emits:
+ *   1. The first crossing (entry) of each breach window.
+ *   2. The peak (most extreme) sample in that window, if different from entry.
+ *
+ * Boolean tags (e.g. *_FAULT, EMG_STOP) are skipped entirely.
+ * Returns at most 10 anomaly entries.
+ */
+function detectAnomalies(
+  samples: { ts: string; value: unknown }[],
+  def: TagDefinitionRecord,
+): { ts: string; value: number; reason: string }[] {
+  if (isBooleanTag(def.slug)) return [];
+
+  const anomalies: { ts: string; value: number; reason: string }[] = [];
+  let inBreach = false;
+  let entryValue = 0;
+  let peakValue = 0;
+  let peakTs = "";
+  let peakBreach: { severity: string; side: string; threshold: number } | null = null;
+
+  // Hoist unit string — was recomputed inside breachReason on every call.
+  const unit = def.unit ? ` ${def.unit}` : "";
+
+  function breachReason(
+    severity: string,
+    side: string,
+    threshold: number,
+    kind: "entered" | "peak",
+  ): string {
+    return kind === "entered"
+      ? `entered ${severity} ${side} threshold ${threshold}${unit}`
+      : `peak ${severity} breach (${threshold}${unit} limit)`;
+  }
+
+  for (const sample of samples) {
+    // Early exit once the 10-anomaly cap is reached —
+    // avoids scanning thousands of remaining samples uselessly.
+    if (anomalies.length >= 10) break;
+
+    if (typeof sample.value !== "number") continue;
+    const value = sample.value;
+    const breach = breachForValue(def, value);
+
+    if (breach && !inBreach) {
+      // ── New breach window starts ──
+      anomalies.push({
+        ts: sample.ts,
+        value,
+        reason: breachReason(breach.severity, breach.side, breach.threshold, "entered"),
+      });
+      inBreach = true;
+      entryValue = value;
+      peakValue = value;
+      peakTs = sample.ts;
+      peakBreach = breach;
+    } else if (breach && inBreach) {
+      // ── Inside breach window — track peak ──
+      const isMoreExtreme =
+        breach.side === "high" ? value > peakValue : value < peakValue;
+      if (isMoreExtreme) {
+        peakValue = value;
+        peakTs = sample.ts;
+        peakBreach = breach;
+      }
+    } else if (!breach && inBreach) {
+      // ── Breach window ended — emit peak if it differs from entry ──
+      if (peakValue !== entryValue && peakBreach && anomalies.length < 10) {
+        anomalies.push({
+          ts: peakTs,
+          value: peakValue,
+          reason: breachReason(peakBreach.severity, peakBreach.side, peakBreach.threshold, "peak"),
+        });
+      }
+      inBreach = false;
+      peakBreach = null;
+    }
+  }
+
+  // Still breaching at end of window — emit peak if different from entry
+  if (inBreach && peakValue !== entryValue && peakBreach && anomalies.length < 10) {
+    anomalies.push({
+      ts: peakTs,
+      value: peakValue,
+      reason: breachReason(peakBreach.severity, peakBreach.side, peakBreach.threshold, "peak") + " (ongoing)",
+    });
+  }
+
+  return anomalies;
+}
+
+// ── detectTrend ───────────────────────────────────────────────────────────────
+/**
+ * Compares the average of the first third of `numbers` against the last third.
+ * Returns "rising" if last avg > first avg by >5%, "falling" if <5%, else "stable".
+ * Always returns "stable" when fewer than 6 numbers are available.
+ */
+function detectTrend(numbers: number[]): "rising" | "falling" | "stable" {
+  if (numbers.length < 6) return "stable";
+  const third = Math.floor(numbers.length / 3);
+  const firstSlice = numbers.slice(0, third);
+  const lastSlice = numbers.slice(-third);
+  const firstAvg = firstSlice.reduce((s, v) => s + v, 0) / firstSlice.length;
+  const lastAvg = lastSlice.reduce((s, v) => s + v, 0) / lastSlice.length;
+  if (lastAvg > firstAvg * 1.05) return "rising";
+  if (lastAvg < firstAvg * 0.95) return "falling";
+  return "stable";
+}
+
+// ── getTagComparison ──────────────────────────────────────────────────────────
+/**
+ * Fetches time-series data for 2+ tags and returns:
+ *
+ * `summary` — compact per-tag stats, trend, anomalies.
+ *             THIS IS WHAT THE AGENT SHOULD READ FOR ANALYSIS.
+ *
+ * `series`  — full raw samples for each tag.
+ *             FOR CHART RENDERING ONLY. Do not analyse raw samples.
+ */
+async function getTagComparison(args: ToolArgs, defaultMachineId: string) {
+  const machineId = textArg(args, "machineId", defaultMachineId);
+  const tagQueries = stringArrayArg(args, "tags");
+  const fromInput = textArg(args, "from", "8h");
+  const toInput = textArg(args, "to");
+  const limit = numberArg(args, "limit", 200, 1000);
+
+  if (tagQueries.length < 2) {
+    return { error: "get_tag_comparison requires at least 2 tags." };
+  }
+
+  const to = toInput ? parseTime(toInput, 0) : new Date();
+  const from = parseTime(fromInput, 8 * 3_600_000);
+
+  if (from >= to) {
+    return { error: "from must be before to." };
+  }
+
+  const resolvedDefs = await Promise.all(
+    tagQueries.map((query) => resolveTagId(query, machineId)),
+  );
+  const missing = tagQueries.filter((_, i) => !resolvedDefs[i]);
+  if (missing.length) {
+    return { error: `Tags not found: ${missing.join(", ")}. Use search_tags.` };
+  }
+
+  const defs = resolvedDefs as TagDefinitionRecord[];
+  const prisma = getPrismaClient();
+
+  const seriesData = await Promise.all(
+    defs.map((def) =>
+      prisma.tagSample.findMany({
+        where: { machineId, tagId: def.tagId, ts: { gte: from, lte: to } },
+        select: { ts: true, valueNumber: true, valueBool: true, valueString: true },
+        orderBy: { ts: "asc" },
+        take: limit,
+      }),
+    ),
+  );
+
+  const windowHours =
+    Math.round(((to.getTime() - from.getTime()) / 3_600_000) * 10) / 10;
+
+  // ── summary: what the agent reads ─────────────────────────────────────────
+  const summary = defs.map((def, i) => {
+    const rows = seriesData[i]!;
+    const samples = rows.map((row) => ({
+      ts: row.ts.toISOString(),
+      value: tagValue(row),
+    }));
+    const numbers = samples
+      .map((s) => s.value)
+      .filter((v): v is number => typeof v === "number");
+    const stats = summarizeNumbers(numbers);
+    const trend = detectTrend(numbers);
+    const anomalies = detectAnomalies(samples, def);
+    const firstAt = samples[0]?.ts ?? null;
+    const lastAt = samples[samples.length - 1]?.ts ?? null;
+
+    return {
+      slug: def.slug,
+      name: def.name,
+      unit: def.unit,
+      thresholds: thresholdText(def),
+      count: samples.length,
+      min: stats.min,
+      max: stats.max,
+      avg: stats.avg,
+      stdDev: stats.stdDev,
+      trend,
+      firstAt,
+      lastAt,
+      anomalies,
+    };
+  });
+
+  // ── series: full raw data for chart rendering ──────────────────────────────
+  const series = defs.map((def, i) => {
+    const rows = seriesData[i]!;
+    return {
+      slug: def.slug,
+      name: def.name,
+      unit: def.unit,
+      samples: rows.map((row) => ({
+        ts: row.ts.toISOString(),
+        value: tagValue(row),
+      })),
+    };
+  });
+
+  return {
+    machineId,
+    from: from.toISOString(),
+    to: to.toISOString(),
+    windowHours,
+    summary,
+    series,
+  };
+}
+
+
 
 async function acknowledgeAlert(args: ToolArgs) {
   const alertEventId = textArg(args, "alertEventId");
@@ -1089,6 +1361,8 @@ export async function executeTool(
       return acknowledgeAlert(args);
     case "get_chat_sessions":
       return getChatSessions(args, machineId);
+    case "get_tag_comparison":
+      return getTagComparison(args, machineId);
     default:
       return { error: `Unknown tool: ${name}` };
   }

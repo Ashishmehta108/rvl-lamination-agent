@@ -24,7 +24,7 @@ import {
   type FunctionDeclaration,
   type Part
 } from "@google/generative-ai";
-import type { ContentBlock } from "@aws-sdk/client-bedrock-runtime";
+import type { ContentBlock, Message } from "@aws-sdk/client-bedrock-runtime";
 import { config } from "../config.js";
 import { executeLoggedTool } from "./tools.js";
 import {
@@ -40,9 +40,6 @@ type StoredChatMessage = {
   content: string;
 };
 
-type FunctionCallPart = Part & {
-  functionCall: { name: string; args?: Record<string, unknown> };
-};
 
 export type AgentToolStep = {
   tool: string;
@@ -365,7 +362,8 @@ export const ALL_TOOL_DECLARATIONS: FunctionDeclaration[] = [
   },
   {
     name: "get_alert_history",
-    description: "Fetch historical alerts with optional time range. Use this for questions like alerts on a date, alerts yesterday, alerts last week.",
+    description:
+      "Fetch historical alerts with optional time range. Use this for questions like alerts on a date, alerts yesterday, alerts last week. Reads Postgres alert_events first; recomputing breaches from Mongo tag samples is expensive and runs only when no persisted rows match (unless includeSampleDerivedThresholds=true).",
     parameters: {
       type: SchemaType.OBJECT,
       properties: {
@@ -374,7 +372,12 @@ export const ALL_TOOL_DECLARATIONS: FunctionDeclaration[] = [
         to: { type: SchemaType.STRING },
         severity: { type: SchemaType.STRING, format: "enum", enum: ["info", "warning", "critical", "all"] },
         tagSlug: { type: SchemaType.STRING },
-        limit: { type: SchemaType.NUMBER }
+        limit: { type: SchemaType.NUMBER },
+        includeSampleDerivedThresholds: {
+          type: SchemaType.BOOLEAN,
+          description:
+            "Optional. true = always merge sample-derived threshold breaches (heavy). false = Postgres only. Omit = derive from samples only when no alert_events rows matched (default, cheaper)."
+        }
       }
     }
   },
@@ -423,6 +426,21 @@ export const ALL_TOOL_DECLARATIONS: FunctionDeclaration[] = [
     name: "get_chat_sessions",
     description: "List recent chat sessions for the machine.",
     parameters: { type: SchemaType.OBJECT, properties: { machineId: { type: SchemaType.STRING }, limit: { type: SchemaType.NUMBER } } }
+  },
+  {
+    name: "get_tag_comparison",
+    description: "Compare multiple tags over a time window. READ THE 'summary' FIELD FOR YOUR ANALYSIS. The 'series' field contains raw data for chart rendering only.",
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {
+        tags: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING }, description: "List of tag names or slugs (min 2)." },
+        machineId: { type: SchemaType.STRING },
+        from: { type: SchemaType.STRING, description: "ISO datetime or relative like 1h, 8h, 24h. Defaults to 8h." },
+        to: { type: SchemaType.STRING, description: "ISO datetime, defaults to now." },
+        limit: { type: SchemaType.NUMBER, description: "Max samples per tag. Default 200, max 1000." }
+      },
+      required: ["tags"]
+    }
   }
 ];
 
@@ -434,38 +452,10 @@ function assertProviderConfigured(): void {
   }
 }
 
-function isFunctionCallPart(part: Part): part is FunctionCallPart {
-  return "functionCall" in part && typeof part.functionCall?.name === "string";
-}
 
-function extractGeminiText(parts: Part[]): string {
-  return parts
-    .map((p) => ("text" in p && typeof p.text === "string" ? p.text : ""))
-    .join("")
-    .trim();
-}
 
-function toGeminiHistory(history: StoredChatMessage[]): Content[] {
-  const mapped = history
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m): Content => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }]
-    }));
 
-  const normalized: Content[] = [];
-  for (const item of mapped) {
-    const prev = normalized[normalized.length - 1];
-    if (prev?.role === item.role) {
-      prev.parts.push(...item.parts);
-      continue;
-    }
-    normalized.push(item);
-  }
-  // Gemini history must not end with a user turn (we send it fresh)
-  if (normalized[normalized.length - 1]?.role === "user") normalized.pop();
-  return normalized;
-}
+
 
 function labelForTool(name: string): string {
   const labels: Record<string, string> = {
@@ -479,7 +469,8 @@ function labelForTool(name: string): string {
     search_tags: "Searched tag definitions",
     get_machine_status: "Checked machine health",
     acknowledge_alert: "Acknowledged alert",
-    get_chat_sessions: "Loaded chat sessions"
+    get_chat_sessions: "Loaded chat sessions",
+    get_tag_comparison: "Compared tag trends"
   };
   return labels[name] ?? `Ran ${name}`;
 }
@@ -502,44 +493,220 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 // ─── Query classifier ─────────────────────────────────────────────────────────
 // Classifies user message into one of 6 query types before planning.
 
-type QueryClass = "informational" | "all_tags" | "current" | "historical" | "diagnostic" | "production" | "complex";
+type QueryClass =
+  | "informational"
+  | "all_tags"
+  | "current"
+  | "historical"
+  | "diagnostic"
+  | "production";
 
-function classifyQuery(msg: string): QueryClass {
+/** Compiled once — avoids per-call RegExp parse and shares lastIndex-free .test() */
+const RE_CLASSIFY_ALL_TAGS =
+  /\b(all tag|all live|all current|all sensor|all reading|all value|every tag|full tag|complete tag|list all|show all|all the tag|all the live|all the current|all the sensor)\b/;
+const RE_CLASSIFY_INFORMATIONAL_PREFIX =
+  /^(what is|who is|how does|explain|define|tell me about|describe)\b/;
+const RE_CLASSIFY_INFORMATIONAL_DENY =
+  /\b(current|live|now|status|alert|fault|running|value|reading|rpm|mpm|tension|meter)\b/;
+const RE_CLASSIFY_DIAGNOSTIC =
+  /\b(why|cause|root cause|explain why|what caused|drop.*and|fault.*and|after.*fault|before.*alarm|correlat|relate|impact|effect on|led to)\b/;
+const RE_CLASSIFY_DIAGNOSTIC_AND_FOLLOW =
+  /\b(and (what|how|should|recommend)\b)/;
+const RE_CLASSIFY_HISTORICAL =
+  /\b(yesterday|last shift|last hour|last \d|on \d{1,2}|april|may|at \d{1,2}:\d{2}|between|from.*to|\d{4}-\d{2}-\d{2}|what happened|why did|dropped|stopped|tripped|went down)\b/;
+const RE_CLASSIFY_PRODUCTION =
+  /\b(production|meter|gsm|efficiency|output|how many|how much produced)\b/;
+const RE_CLASSIFY_CURRENT =
+  /\b(current|live|now|right now|status|is.*running|active alert|what is|reading|value)\b/;
+
+function hasSecondQuestionMark(s: string): boolean {
+  const first = s.indexOf("?");
+  return first !== -1 && s.indexOf("?", first + 1) !== -1;
+}
+
+function classifyQueryWithRegex(msg: string): QueryClass {
+  if (!msg) return "current";
   const m = msg.toLowerCase();
 
-  // Explicit request for every tag value — must be checked first
-  const isAllTags =
-    /\b(all tag|all live|all current|all sensor|all reading|all value|every tag|full tag|complete tag|list all|show all|all the tag|all the live|all the current|all the sensor)\b/.test(m);
-  if (isAllTags) return "all_tags";
+  if (RE_CLASSIFY_ALL_TAGS.test(m)) return "all_tags";
 
-  // Pure knowledge question with no machine context
-  const isInfoOnly =
-    /^(what is|who is|how does|explain|define|tell me about|describe)\b/.test(m) &&
-    !/\b(current|live|now|status|alert|fault|running|value|reading|rpm|mpm|tension|meter)\b/.test(m);
-  if (isInfoOnly) return "informational";
+  if (
+    RE_CLASSIFY_INFORMATIONAL_PREFIX.test(m) &&
+    !RE_CLASSIFY_INFORMATIONAL_DENY.test(m)
+  ) {
+    return "informational";
+  }
 
-  // Complex / multi-part: contains causal, diagnostic, or compound connectors
-  const isComplex =
-    /\b(why|cause|root cause|explain why|what caused|drop.*and|fault.*and|after.*fault|before.*alarm)\b/.test(m) ||
-    (/\b(and (what|how|should|recommend)\b)/.test(m) && m.length > 60) ||
-    /\b(correlat|relate|impact|effect on|led to)\b/.test(m);
-  if (isComplex) return "diagnostic";
+  if (
+    RE_CLASSIFY_DIAGNOSTIC.test(m) ||
+    (RE_CLASSIFY_DIAGNOSTIC_AND_FOLLOW.test(m) && m.length > 60)
+  ) {
+    return "diagnostic";
+  }
 
-  // Historical: contains a past time reference
-  const isHistorical =
-    /\b(yesterday|last shift|last hour|last \d|on \d{1,2}|april|may|at \d{1,2}:\d{2}|between|from.*to|\d{4}-\d{2}-\d{2}|what happened|why did|dropped|stopped|tripped|went down)\b/.test(m);
-  if (isHistorical) return "historical";
+  if (RE_CLASSIFY_HISTORICAL.test(m)) return "historical";
+  if (RE_CLASSIFY_PRODUCTION.test(m)) return "production";
+  if (RE_CLASSIFY_CURRENT.test(m)) return "current";
+  if (hasSecondQuestionMark(m)) return "diagnostic";
 
-  // Production focus
-  if (/\b(production|meter|gsm|efficiency|output|how many|how much produced)\b/.test(m)) return "production";
+  return "current";
+}
 
-  // Current state
-  if (/\b(current|live|now|right now|status|is.*running|active alert|what is|reading|value)\b/.test(m)) return "current";
+const QUERY_CLASS_LABELS = [
+  "informational",
+  "all_tags",
+  "current",
+  "historical",
+  "diagnostic",
+  "production"
+] as const satisfies readonly QueryClass[];
 
-  // Multi-part pattern: two distinct questions in one message
-  if ((m.match(/\?/g) ?? []).length >= 2) return "diagnostic";
+const QUERY_CLASSIFIER_SYSTEM = `You are a routing assistant for a nonwoven lamination machine (lamination-01). Each user message must map to exactly ONE JSON field "queryClass".
 
-  return "current"; // safe default
+## Your job (keep it simple)
+Read the message once, then pick the single best label using the rules below. Output JSON only: {"queryClass":"<label>"}.
+
+## Labels — what each one means
+
+**informational**
+- The user wants definitions, theory, or general "how does lamination work" style answers.
+- They are NOT asking for live numbers, alerts, tag values, production totals, or a specific past incident on THIS machine.
+- If they mention "this machine" / "our line" / "right now" / "current" / alerts / RPM / tension → NOT informational.
+
+**all_tags**
+- They want a broad dump: "all tags", "every sensor", "list all live values", "complete readings", "show everything".
+- Not the same as asking for one or two specific tags.
+
+**diagnostic**
+- Root cause, correlation, "why did X happen", "what caused", "relationship between A and B".
+- Multiple distinct asks in one message (e.g. two question marks with different topics).
+- Long troubleshooting messages (> ~60 chars) that combine faults, production, and recommendations.
+
+**historical**
+- Any explicit past window: dates, "yesterday", "last shift", "last hour", "between … and …", "when we tripped", "what happened at 14:30".
+- If they want data for a past time range, choose historical even if they also mention production.
+
+**production**
+- Throughput, meters, GSM, efficiency, "how much did we make", output counters — without a strong historical time window.
+- If BOTH a clear past window AND production appear, prefer **historical** (they need time-series + alerts in context).
+
+**current**
+- Default when none of the above clearly wins: present status, "what is running now", live values for a few tags, "any open alerts" without a past date.
+
+## Tie-breakers (apply in order)
+1) If text clearly asks for **every** tag → all_tags.
+2) If a **past time or date** is explicit → historical (over production/current).
+3) If they only want encyclopedia-style explanation with zero machine data → informational.
+4) If they want **why / cause / correlate** or clearly **multi-part** troubleshooting → diagnostic.
+5) If production/output/GSM/meters without a dated window → production.
+6) Else → current.
+
+## Mini examples (class → reason)
+- "List every live tag" → all_tags
+- "What is GSM in lamination?" → informational
+- "What is our GSM right now on the line?" → current
+- "Alerts on 12 May 2026" → historical
+- "Why did production drop after the winder fault?" → diagnostic
+- "How many meters today?" → production (if no explicit historical window) OR current if clearly "so far this run"
+- "Is the extruder running?" → current`;
+
+function parseQueryClassFromModelText(raw: string): QueryClass | null {
+  const trimmed = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/m, "")
+    .trim();
+  const tryParse = (s: string): QueryClass | null => {
+    try {
+      const o = JSON.parse(s) as { queryClass?: unknown };
+      const v = o.queryClass;
+      if (typeof v !== "string") return null;
+      const q = v.trim().toLowerCase();
+      return (QUERY_CLASS_LABELS as readonly string[]).includes(q) ? (q as QueryClass) : null;
+    } catch {
+      return null;
+    }
+  };
+  let parsed = tryParse(trimmed);
+  if (parsed) return parsed;
+  const brace = trimmed.match(/\{[\s\S]*\}/);
+  if (brace) parsed = tryParse(brace[0]);
+  return parsed;
+}
+
+async function classifyQueryWithGemini(msg: string, timeoutMs: number): Promise<QueryClass | null> {
+  const key = config.geminiApiKey?.trim();
+  if (!key) return null;
+  const genAI = new GoogleGenerativeAI(key);
+  const model = genAI.getGenerativeModel({
+    model: config.geminiModel,
+    systemInstruction: QUERY_CLASSIFIER_SYSTEM,
+    generationConfig: {
+      temperature: 0,
+      maxOutputTokens: 128,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: SchemaType.OBJECT,
+        properties: {
+          queryClass: {
+            type: SchemaType.STRING,
+            format: "enum",
+            enum: [...QUERY_CLASS_LABELS]
+          }
+        },
+        required: ["queryClass"]
+      }
+    }
+  });
+  const prompt = `Classify the following message:\n${JSON.stringify(msg.slice(0, 4000))}`;
+  const result = await withTimeout(
+    model.generateContent(prompt),
+    timeoutMs + 250,
+    "query_classifier_gemini"
+  );
+  const text = result.response.text();
+  return parseQueryClassFromModelText(text);
+}
+
+async function classifyQueryWithBedrock(msg: string, timeoutMs: number): Promise<QueryClass | null> {
+  const messages: Message[] = [
+    { role: "user", content: [{ text: JSON.stringify(msg.slice(0, 4000)) }] }
+  ];
+  const response = await bedrockConverse({
+    systemPrompt: `${QUERY_CLASSIFIER_SYSTEM}
+
+Output format: a single JSON object only, no markdown:
+{"queryClass":"informational|all_tags|current|historical|diagnostic|production"}`,
+    messages,
+    temperature: 0,
+    timeoutMs
+  });
+  const text = extractBedrockText(response.output?.message?.content);
+  return parseQueryClassFromModelText(text);
+}
+
+async function classifyQueryWithSmallModel(
+  msg: string,
+  logger: FastifyBaseLogger
+): Promise<QueryClass> {
+  if (!msg.trim()) return "current";
+  if (config.queryClassifierMode === "regex") return classifyQueryWithRegex(msg);
+  try {
+    const timeoutMs = config.queryClassifierTimeoutMs;
+    const fromModel =
+      config.aiProvider === "gemini"
+        ? await classifyQueryWithGemini(msg, timeoutMs)
+        : await classifyQueryWithBedrock(msg, timeoutMs);
+    if (fromModel) {
+      logger.debug({ queryClass: fromModel, classifier: "model" }, "query_classified");
+      return fromModel;
+    }
+  } catch (err) {
+    logger.warn({ err: String(err) }, "query_classifier_failed");
+  }
+  const fallback = classifyQueryWithRegex(msg);
+  logger.debug({ queryClass: fallback, classifier: "regex_fallback" }, "query_classified");
+  return fallback;
 }
 
 // ─── Query decomposer ─────────────────────────────────────────────────────────
@@ -552,6 +719,7 @@ type SubQuery = {
   args: Record<string, unknown>;
 };
 
+/** Regex-only fallback when planner mode is regex or Bedrock decomposition fails. */
 function decomposeComplexQuery(msg: string): SubQuery[] {
   const m = msg.toLowerCase();
   const subQueries: SubQuery[] = [];
@@ -600,13 +768,189 @@ function decomposeComplexQuery(msg: string): SubQuery[] {
   return subQueries;
 }
 
+/** Tools the diagnostic decomposer may emit (subset of chat tools; no acknowledge / chat sessions). */
+const DECOMPOSER_ALLOWED_TOOLS = [
+  "get_live_tag_values",
+  "get_all_live_tags",
+  "get_tag_history",
+  "get_active_alerts",
+  "get_alert_history",
+  "get_tag_definition",
+  "get_production_summary",
+  "search_tags",
+  "get_machine_status",
+  "get_tag_comparison"
+] as const;
+
+type DecomposerTool = (typeof DECOMPOSER_ALLOWED_TOOLS)[number];
+
+function isDecomposerTool(name: string): name is DecomposerTool {
+  return (DECOMPOSER_ALLOWED_TOOLS as readonly string[]).includes(name);
+}
+
+const QUERY_DECOMPOSER_SYSTEM = `You run on AWS Bedrock. Your job is to design a **multi-step reasoning plan** for one user message about nonwoven lamination machine **lamination-01**.
+
+The downstream agent will execute your steps in order, then **synthesize** a single answer. Each step must move the investigation forward: new evidence, a refined hypothesis, or a cross-check—not redundant reads.
+
+---
+
+## Reasoning contract (follow mentally, then encode as steps)
+
+1. **Frame** — What is the user really asking (symptom, window, subsystem, comparison)? What would falsify a wrong guess?
+2. **Anchor in time or mode** — If the question is about the past, anchor with \`from\`/\`to\` (ISO +05:30 or relative: "24h", "8h", "7d"). If "now", prefer \`get_machine_status\` / \`get_active_alerts\` before deep history.
+3. **Evidence chain** — Order steps so later steps **depend** on earlier context: e.g. resolve ambiguous names (\`search_tags\`) before \`get_tag_definition\` / \`get_tag_history\`; load alerts in the window before pulling trends that explain them.
+4. **Narrow** — Prefer a few **high-signal** tags over \`get_all_live_tags\` unless the user asked for everything.
+5. **Cross-check** — When comparing causes (speed vs tension vs fault), use \`get_tag_comparison\` or aligned \`get_tag_history\` with the **same** time window in \`args\`.
+6. **Thresholds** — When "why did we trip" or limits matter, include \`get_tag_definition\` for the relevant slug **after** you know which tag (from message or \`search_tags\`).
+
+---
+
+## JSON output (strict)
+
+Return **only** valid JSON (no markdown, no prose outside JSON):
+
+{"steps":[{"question":"…","tool":"<exact tool name>","args":{}}]}
+
+- **question** — One line that states the **reasoning purpose** of this step, not just the tool name. Start with a verb: "Establish whether…", "Load alerts to…", "Compare X vs Y over…", "Resolve tag name for…". This appears in the plan UI for operators.
+- **tool** — Must be exactly one of: ${DECOMPOSER_ALLOWED_TOOLS.join(", ")}
+- **args** — Valid for that tool; use {} only when all parameters are optional. Do not invent \`machineId\` unless the user supplied one.
+
+---
+
+## Step count and flow
+
+- Emit **4–8** steps (aim for **5–6**). Too few skips reasoning; too many adds noise.
+- **First step** should establish context (time scope, live snapshot, or broad alert/production picture) as the question demands.
+- **Last step** should supply evidence that **directly supports** answering the user's main "why" or "what happened" (e.g. trend or definition), not a generic duplicate of step 1.
+
+---
+
+## Tool discipline (must satisfy)
+
+- \`get_tag_history\` — always include \`"tag"\` (slug or name). Include \`from\`/\`to\` when not purely "live".
+- \`get_tag_definition\` — always include \`"tag"\`.
+- \`get_live_tag_values\` — \`"tags"\` must be a non-empty array of strings.
+- \`get_tag_comparison\` — \`"tags"\` must have **at least two** entries; align time window with the rest of the plan.
+- Do **not** use tools outside the allowed list (no acknowledge, no chat sessions).
+
+---
+
+## Domain shortcuts (when the message fits)
+
+Use these slugs when they clearly match the scenario (still justify in **question**):
+
+- Speed / run state: MASTER_SPEED_PCT, EXTRUDER_RPM  
+- Tension: WINDER_TENSION_PCT  
+- Safety / stop: EMG_STOP  
+- Fault bits: EXTRUDER_FAULT  
+- Production counters: RUNNING_METER, GSM_ENTRY  
+
+If the user names something fuzzy, **search_tags** first, then history/definition on the resolved slug.
+
+---
+
+## Multi-step reasoning examples (shape, not copy-paste)
+
+- **"Why production dropped after noon"** — Narrow window in args → alert history → production summary → speed/tension trends → optional tag_definition on the faulted channel.  
+- **"Is winder fault related to tension spike"** — alerts → comparison or paired histories with identical \`from\`/\`to\` → definition for thresholds.
+
+Your output is only the JSON \`steps\` array wrapper as specified above.`;
+
+function parseDecomposerPayload(raw: string): SubQuery[] | null {
+  const trimmed = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/m, "")
+    .trim();
+  const tryParse = (s: string): SubQuery[] | null => {
+    try {
+      const o = JSON.parse(s) as { steps?: unknown };
+      if (!Array.isArray(o.steps)) return null;
+      const out: SubQuery[] = [];
+      for (const item of o.steps) {
+        if (!item || typeof item !== "object") continue;
+        const row = item as { question?: unknown; tool?: unknown; args?: unknown };
+        if (typeof row.question !== "string" || typeof row.tool !== "string") continue;
+        const tool = row.tool.trim();
+        if (!isDecomposerTool(tool)) continue;
+        const args =
+          row.args && typeof row.args === "object" && !Array.isArray(row.args)
+            ? (row.args as Record<string, unknown>)
+            : {};
+        out.push({ question: row.question.trim(), tool, args });
+      }
+      if (out.length < 1) return null;
+      return out.slice(0, 10);
+    } catch {
+      return null;
+    }
+  };
+  let parsed = tryParse(trimmed);
+  if (parsed) return parsed;
+  const brace = trimmed.match(/\{[\s\S]*\}/);
+  if (brace) parsed = tryParse(brace[0]);
+  return parsed;
+}
+
+/** Diagnostic plan steps: always Bedrock JSON (see QUERY_DECOMPOSER_SYSTEM). Regex fallback: decomposeComplexQuery. */
+async function decomposeComplexQueryWithBedrock(
+  msg: string,
+  timeoutMs: number,
+): Promise<SubQuery[] | null> {
+  const messages: Message[] = [
+    { role: "user", content: [{ text: JSON.stringify(msg.slice(0, 6000)) }] },
+  ];
+  const response = await bedrockConverse({
+    systemPrompt: `${QUERY_DECOMPOSER_SYSTEM}
+
+Return only valid JSON: {"steps":[...]} — no markdown, no commentary.`,
+    messages,
+    modelId: config.bedrockModelId,
+    temperature: 0.1,
+    timeoutMs,
+  });
+  const text = extractBedrockText(response.output?.message?.content);
+  return parseDecomposerPayload(text);
+}
+
+async function resolveDiagnosticSubQueries(
+  userMessage: string,
+  logger: FastifyBaseLogger,
+): Promise<SubQuery[]> {
+  if (config.queryClassifierMode === "regex") {
+    return decomposeComplexQuery(userMessage);
+  }
+  try {
+    const timeoutMs = config.queryDecomposerTimeoutMs;
+    const fromModel = await decomposeComplexQueryWithBedrock(userMessage, timeoutMs);
+    if (fromModel?.length) {
+      logger.debug(
+        { stepCount: fromModel.length, decomposer: "bedrock" },
+        "query_decomposed",
+      );
+      return fromModel;
+    }
+  } catch (err) {
+    logger.warn({ err: String(err) }, "query_decomposer_failed");
+  }
+  const fallback = decomposeComplexQuery(userMessage);
+  logger.debug(
+    { stepCount: fallback.length, decomposer: "regex_fallback" },
+    "query_decomposed",
+  );
+  return fallback;
+}
+
 // ─── Heuristic planner ────────────────────────────────────────────────────────
 // Classifies query → (optionally) decomposes → builds observable plan.
 // The actual tool calls are still driven by the LLM; this is for
 // observability, guardrails, and injecting decomposed context into the prompt.
 
-function buildHeuristicPlan(userMessage: string): AgentPlan {
-  const queryClass = classifyQuery(userMessage);
+async function buildHeuristicPlan(
+  userMessage: string,
+  logger: FastifyBaseLogger,
+): Promise<AgentPlan> {
+  const queryClass = await classifyQueryWithSmallModel(userMessage, logger);
 
   if (queryClass === "informational") {
     return {
@@ -626,8 +970,7 @@ function buildHeuristicPlan(userMessage: string): AgentPlan {
     // The model will render the complete grouped table from its output.
     push("get_all_live_tags", "Fetch ALL live tag values grouped by subsystem");
   } else if (queryClass === "diagnostic") {
-    // Use decomposer for complex queries
-    const subQueries = decomposeComplexQuery(userMessage);
+    const subQueries = await resolveDiagnosticSubQueries(userMessage, logger);
     for (const sq of subQueries) {
       push(sq.tool, sq.question);
     }
@@ -805,19 +1148,27 @@ function shouldGenerateChart(userMessage: string, toolSteps: AgentToolStep[]): b
 
   if (!wantsChart) return false;
 
-  // Require at least one history step with real numeric (non-boolean) data
-  const historySteps = toolSteps.filter(
-    (s) => s.tool === "get_tag_history" && s.status === "success"
+  // Require at least one history or comparison step with real numeric (non-boolean) data
+  const chartSteps = toolSteps.filter(
+    (s) => (s.tool === "get_tag_history" || s.tool === "get_tag_comparison") && s.status === "success"
   );
-  const hasNumericData = historySteps.some((s) => {
-    const samples: any[] = s.result?.samples ?? [];
-    return (
-      samples.length >= 2 &&
-      samples.some((d: any) => {
-        const v = Number(d.value ?? d.val ?? NaN);
-        return !isNaN(v) && v !== 0 && v !== 1;
-      })
-    );
+  
+  const hasNumericData = chartSteps.some((s) => {
+    // For comparison, samples are inside each series item
+    const seriesArr: any[] = s.tool === "get_tag_comparison" 
+      ? (s.result?.series ?? []) 
+      : [{ samples: s.result?.samples ?? [] }];
+
+    return seriesArr.some(series => {
+      const samples: any[] = series.samples ?? [];
+      return (
+        samples.length >= 2 &&
+        samples.some((d: any) => {
+          const v = Number(d.value ?? d.val ?? NaN);
+          return !isNaN(v) && v !== 0 && v !== 1;
+        })
+      );
+    });
   });
 
   return hasNumericData;
@@ -949,7 +1300,7 @@ function generateChartsFromHistory(toolSteps: AgentToolStep[]): AgentChart[] {
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
-export async function runGeminiAgent(args: {
+export async function runAgent(args: {
   userMessage: string;
   history: StoredChatMessage[];
   machineId: string;
@@ -958,12 +1309,9 @@ export async function runGeminiAgent(args: {
 }): Promise<AgentResult> {
   assertProviderConfigured();
   const start = Date.now();
-  const plan = buildHeuristicPlan(args.userMessage);
+  const plan = await buildHeuristicPlan(args.userMessage, args.logger);
 
-  const result =
-    config.aiProvider === "bedrock"
-      ? await runBedrockPipeline({ ...args, plan })
-      : await runGeminiPipeline({ ...args, plan });
+  const result = await runBedrockPipeline({ ...args, plan })
 
   const reflection = reflect(result.toolSteps);
 
@@ -1001,174 +1349,7 @@ export async function runGeminiAgent(args: {
   };
 }
 
-// ─── Gemini Pipeline ──────────────────────────────────────────────────────────
 
-async function runGeminiPipeline(args: {
-  userMessage: string;
-  history: StoredChatMessage[];
-  machineId: string;
-  sessionId: string;
-  logger: FastifyBaseLogger;
-  plan: AgentPlan;
-}): Promise<Omit<AgentResult, "trace">> {
-  const genAI = new GoogleGenerativeAI(config.geminiApiKey);
-
-  // Relax safety settings: industrial terms like "fault", "alarm", "emergency stop"
-  // frequently trigger Gemini's content filters, causing silent empty responses.
-  const safetySettings = [
-    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH }
-  ];
-
-  const model = genAI.getGenerativeModel({
-    model: config.geminiModel,
-    systemInstruction: buildSystemPrompt(),
-    generationConfig: { temperature: 0.2, topP: 0.85 },
-    safetySettings
-  });
-
-  const chat = model.startChat({
-    history: toGeminiHistory(args.history),
-    tools: [{ functionDeclarations: ALL_TOOL_DECLARATIONS }]
-  });
-
-  const toolsUsed: string[] = [];
-  const toolSteps: AgentToolStep[] = [];
-  const cache = new Map<string, unknown>();
-  let totalCalls = 0;
-  let tokenCount: number | undefined;
-
-  // ── EXECUTE phase: initial LLM call ───────────────────────────────────────
-  let response = await withTimeout(
-    chat.sendMessage(args.userMessage),
-    LLM_TIMEOUT_MS,
-    "gemini_initial"
-  );
-  tokenCount = response.response.usageMetadata?.totalTokenCount;
-
-  for (let round = 0; round < 8; round++) {
-    const candidate = response.response.candidates?.[0];
-    const parts = candidate?.content?.parts ?? [];
-    const finishReason = candidate?.finishReason;
-
-    // ── Guard: empty/blocked response ─────────────────────────────────────
-    if (!parts.length) {
-      args.logger.warn(
-        { round, finishReason, sessionId: args.sessionId, model: config.geminiModel },
-        "gemini_empty_parts"
-      );
-
-      // Round 0: model returned nothing before any tools ran.
-      // Retry once as a plain text-only call (no function declarations) to get
-      // at least a grounded answer using the system prompt + system context.
-      if (round === 0 && totalCalls === 0) {
-        args.logger.warn({ sessionId: args.sessionId }, "gemini_round0_empty_retrying_text_only");
-        try {
-          const textModel = genAI.getGenerativeModel({
-            model: config.geminiModel,
-            systemInstruction: buildSystemPrompt(),
-            generationConfig: { temperature: 0.3 },
-            safetySettings
-          });
-          const textChat = textModel.startChat({ history: toGeminiHistory(args.history) });
-          const textResp = await withTimeout(
-            textChat.sendMessage(
-              `${args.userMessage}\n\n[Note: Live machine data is temporarily unavailable. Answer based on your system knowledge and the information already in this session.]`
-            ),
-            LLM_TIMEOUT_MS,
-            "gemini_text_fallback"
-          );
-          const fallbackText = extractGeminiText(textResp.response.candidates?.[0]?.content?.parts ?? []);
-          if (fallbackText) {
-            return {
-              reply: `⚠ Live data unavailable (model returned no content; reason: ${finishReason ?? "UNKNOWN"}). Fallback answer based on system context:\n\n${fallbackText}`,
-              toolsUsed,
-              toolSteps,
-              tokenCount
-            };
-          }
-        } catch (retryErr) {
-          args.logger.error({ err: String(retryErr), sessionId: args.sessionId }, "gemini_text_fallback_failed");
-        }
-      }
-
-      // All retries exhausted — return a meaningful diagnostic
-      const reason = finishReason ?? "UNKNOWN";
-      return {
-        reply: [
-          `The model returned no content (finishReason: ${reason}).`,
-          reason === "SAFETY"
-            ? "The query may have triggered a content safety filter. Try rephrasing without terms like 'emergency' or split into simpler questions."
-            : "This may be a transient model issue. Please try again in a few seconds."
-        ].join(" "),
-        toolsUsed,
-        toolSteps,
-        tokenCount
-      };
-    }
-
-    const calls = parts.filter(isFunctionCallPart);
-
-    if (!calls.length) {
-      // FINALIZE: model returned text with no further tool calls
-      const reply = extractGeminiText(parts);
-      if (!reply) {
-        args.logger.warn({ round, finishReason, sessionId: args.sessionId }, "gemini_text_extraction_empty");
-      }
-      return {
-        reply: reply || `No text content in model response (finishReason: ${finishReason ?? "STOP"}).`,
-        toolsUsed,
-        toolSteps,
-        tokenCount
-      };
-    }
-
-    // Guard: hard cap on total tool calls
-    if (totalCalls + calls.length > MAX_TOOL_CALLS) {
-      args.logger.warn({ totalCalls, requested: calls.length, sessionId: args.sessionId }, "agent_tool_cap_reached");
-      const reply = extractGeminiText(parts);
-      return {
-        reply: reply || "Analysis stopped: maximum tool call limit reached for this request.",
-        toolsUsed,
-        toolSteps,
-        tokenCount
-      };
-    }
-
-    // EXECUTE tools (parallel, with dedup + timeout + retry)
-    const toolResults = await Promise.all(
-      calls.map((part) =>
-        runTool({
-          name: part.functionCall.name,
-          args: part.functionCall.args ?? {},
-          machineId: args.machineId,
-          sessionId: args.sessionId,
-          logger: args.logger,
-          cache,
-          toolSteps,
-          toolsUsed
-        })
-      )
-    );
-    totalCalls += calls.length;
-
-    response = await withTimeout(
-      chat.sendMessage(toolResults as Part[]),
-      LLM_TIMEOUT_MS,
-      `gemini_round_${round}`
-    );
-    tokenCount = response.response.usageMetadata?.totalTokenCount ?? tokenCount;
-  }
-
-  return {
-    reply: "Analysis could not be completed: maximum reasoning rounds reached.",
-    toolsUsed,
-    toolSteps,
-    tokenCount
-  };
-}
 
 // ─── Bedrock Pipeline ─────────────────────────────────────────────────────────
 

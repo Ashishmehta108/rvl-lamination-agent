@@ -50,6 +50,9 @@ type TagTrendRow = {
   max: number | null;
   avg: number | null;
   stdDev: number | null;
+  trend: "rising" | "falling" | "stable";
+  /** Pre-formatted human-readable string. Pass THIS to LLM steps — never the raw numbers. */
+  summary: string;
   sampleCount: number;
 };
 
@@ -85,14 +88,7 @@ function computeTagStatus(
   return "Normal";
 }
 
-function summarizeNumbers(values: number[]): { min: number | null; max: number | null; avg: number | null; stdDev: number | null } {
-  if (!values.length) return { min: null, max: null, avg: null, stdDev: null };
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const avg = values.reduce((s, v) => s + v, 0) / values.length;
-  const variance = values.reduce((s, v) => s + (v - avg) ** 2, 0) / values.length;
-  return { min: +min.toFixed(2), max: +max.toFixed(2), avg: +avg.toFixed(2), stdDev: +Math.sqrt(variance).toFixed(2) };
-}
+
 
 // ─── Data collectors ──────────────────────────────────────────────────────────
 
@@ -127,7 +123,14 @@ async function buildTagSnapshot(machineId: string): Promise<TagSnapshotRow[]> {
   }
 }
 
-/** Fetch last-N samples for the most important numeric tags and return trend summaries. */
+/** Fetch samples for key numeric tags and return compact, LLM-ready trend summaries.
+ *
+ * Uses Welford's online algorithm for a single-pass O(1)-memory stat computation
+ * per tag — no large per-tag number[] arrays are built in memory.
+ *
+ * Output is intentionally compact: only pre-formatted strings reach the LLM context.
+ * Raw samples and intermediate arrays are never serialised into the prompt.
+ */
 async function buildTrendData(machineId: string, windowStart: Date, windowEnd: Date): Promise<TagTrendRow[]> {
   const TREND_TAGS = [
     "MASTER_SPEED_PCT", "LAMINATOR_MPM", "RUNNING_METER",
@@ -143,7 +146,31 @@ async function buildTrendData(machineId: string, windowStart: Date, windowEnd: D
 
     if (!defs.length) return [];
 
-    const tagIdToSlug = new Map(defs.map(d => [d.tagId, d]));
+    // ── Per-tag Welford accumulator ────────────────────────────────────────────
+    // pos       — sample index within this tag (0-based), tracked in-struct.
+    // earlySum  — sum of first BUCKET samples only.
+    // earlyN    — count of early samples (capped at BUCKET).
+    // lateBuf   — circular ring buffer of the last BUCKET values seen.
+    // lateBufN  — how many slots in lateBuf are valid.
+    // lateHead  — write pointer into lateBuf.
+    // No pre-count pass needed; no separate tagPos/tagCounts Maps.
+    const BUCKET = 334; // ≈ one-third of 1000 samples; keeps memory bounded
+    type Acc = {
+      n: number; mean: number; M2: number; min: number; max: number;
+      pos: number;
+      earlySum: number; earlyN: number;
+      lateBuf: Float64Array; lateHead: number; lateBufN: number;
+    };
+    const acc = new Map<string, Acc>();
+    for (const d of defs) {
+      acc.set(d.tagId, {
+        n: 0, mean: 0, M2: 0, min: Infinity, max: -Infinity,
+        pos: 0,
+        earlySum: 0, earlyN: 0,
+        lateBuf: new Float64Array(BUCKET), lateHead: 0, lateBufN: 0,
+      });
+    }
+
     const samples = await prisma.tagSample.findMany({
       where: {
         machineId,
@@ -156,18 +183,67 @@ async function buildTrendData(machineId: string, windowStart: Date, windowEnd: D
       take: 10_000
     }) as Array<{ tagId: string; valueNumber: number }>;
 
-    const byTag = new Map<string, number[]>();
+    // ── Single pass — no pre-count, no extra Map lookups ──────────────────────
     for (const s of samples) {
-      const arr = byTag.get(s.tagId) ?? [];
-      arr.push(s.valueNumber);
-      byTag.set(s.tagId, arr);
+      const a = acc.get(s.tagId);
+      if (!a) continue;
+      const v = s.valueNumber;
+
+      // Welford online mean & variance
+      a.n++;
+      const delta = v - a.mean;
+      a.mean += delta / a.n;
+      a.M2 += delta * (v - a.mean);
+
+      if (v < a.min) a.min = v;
+      if (v > a.max) a.max = v;
+
+      // Early bucket: capture first BUCKET samples inline
+      if (a.pos < BUCKET) { a.earlySum += v; a.earlyN++; }
+
+      // Late circular buffer: always write, overwrites oldest slot
+      a.lateBuf[a.lateHead] = v;
+      a.lateHead = (a.lateHead + 1) % BUCKET;
+      if (a.lateBufN < BUCKET) a.lateBufN++;
+
+      a.pos++;
     }
 
+    // ── Build LLM-ready output ────────────────────────────────────────────────
     return defs.map(def => {
-      const values = byTag.get(def.tagId) ?? [];
-      const stats = summarizeNumbers(values);
-      return { slug: def.slug, name: def.name, unit: def.unit ?? "", ...stats, sampleCount: values.length };
-    }).filter(r => r.sampleCount > 0);
+      const a = acc.get(def.tagId)!;
+      if (a.n === 0) return null;
+
+      const avg    = +a.mean.toFixed(2);
+      const stdDev = +(Math.sqrt(a.n > 1 ? a.M2 / a.n : 0)).toFixed(2);
+      const min    = +a.min.toFixed(2);
+      const max    = +a.max.toFixed(2);
+
+      // Late average from the circular buffer
+      let lateSum = 0;
+      for (let i = 0; i < a.lateBufN; i++) lateSum += a.lateBuf[i]!;
+      const earlyAvg = a.earlyN > 0 ? a.earlySum / a.earlyN : avg;
+      const lateAvg  = a.lateBufN > 0 ? lateSum / a.lateBufN : avg;
+
+      const trend: "rising" | "falling" | "stable" =
+        a.n < 6                       ? "stable"  :
+        lateAvg > earlyAvg * 1.05     ? "rising"  :
+        lateAvg < earlyAvg * 0.95     ? "falling" : "stable";
+
+      const u = def.unit ? ` ${def.unit}` : "";
+      // summary is the ONLY field that reaches the LLM — raw arrays never in prompt
+      const summary = `avg ${avg}${u}, min ${min}${u}, max ${max}${u}, stdDev ${stdDev}${u}, trend: ${trend}`;
+
+      return {
+        slug: def.slug,
+        name: def.name,
+        unit: def.unit ?? "",
+        min, max, avg, stdDev,
+        trend,
+        summary,
+        sampleCount: a.n,
+      };
+    }).filter((r): r is NonNullable<typeof r> => r !== null);
   } catch {
     return [];
   }
@@ -376,7 +452,8 @@ export async function registerReportRunner(boss: PgBoss, logger: Logger) {
         const s5 = await runReportStep("trends", getReportPrompt(REPORT_TRENDS_PROMPT_ID), {
           windowStart: payload.windowStart,
           windowEnd: payload.windowEnd,
-          trends: trendData
+          // Pass only compact summary strings — never raw numeric arrays to LLM
+          trends: trendData.map(t => ({ slug: t.slug, name: t.name, unit: t.unit, summary: t.summary, sampleCount: t.sampleCount }))
         }, runLog);
         stepTimings.trends = s5.ms;
 
@@ -392,7 +469,10 @@ export async function registerReportRunner(boss: PgBoss, logger: Logger) {
         const s7 = await runReportStep("recommendations", getReportPrompt(REPORT_RECOMMENDATIONS_PROMPT_ID), {
           risks: riskSignals,
           criticalAlerts: alertFacts.filter(a => a.severity === "critical").slice(0, 5),
-          volatileTags: trendData.filter(t => t.avg && t.stdDev && (t.stdDev / t.avg) > 0.15),
+          // Volatile = stdDev > 15% of avg — pass only slug + summary, not raw stats
+          volatileTags: trendData
+            .filter(t => t.avg && t.stdDev && (t.stdDev / t.avg) > 0.15)
+            .map(t => ({ slug: t.slug, name: t.name, summary: t.summary })),
           faultTags: tagFacts.filter(t => t.status === "Fault" || t.status === "Alarm")
         }, runLog);
         stepTimings.recommendations = s7.ms;

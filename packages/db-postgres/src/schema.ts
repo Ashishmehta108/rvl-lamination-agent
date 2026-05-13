@@ -19,6 +19,26 @@ export const deliveryStatus = pgEnum("delivery_status", ["queued", "sending", "s
 export const reportFormat = pgEnum("report_format", ["html", "json"]);
 export const runStatus = pgEnum("run_status", ["queued", "running", "succeeded", "failed"]);
 export const chatRole = pgEnum("chat_role", ["user", "assistant", "system"]);
+export const userRole = pgEnum("user_role", ["operator", "engineer", "admin"]);
+
+// ─── Users ────────────────────────────────────────────────────────────────────
+
+export const users = pgTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    role: userRole("role").notNull().default("operator"),
+    tenantId: text("tenant_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (t) => ({
+    emailIdx: uniqueIndex("users_email_idx").on(t.email),
+    tenantIdx: index("users_tenant_idx").on(t.tenantId)
+  })
+);
 
 export const alertRules = pgTable(
   "alert_rules",
@@ -196,6 +216,10 @@ export const chatSessions = pgTable(
   {
     id: text("id").primaryKey(),
     machineId: text("machine_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "restrict" }),
+    tenantId: text("tenant_id").notNull(),
     title: text("title").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -203,7 +227,12 @@ export const chatSessions = pgTable(
     metadata: jsonb("metadata").notNull().default({})
   },
   (t) => ({
-    machineUpdatedIdx: index("chat_sessions_machine_updated_idx").on(t.machineId, t.updatedAt),
+    tenantMachineUpdatedIdx: index("chat_sessions_tenant_machine_updated_idx").on(
+      t.tenantId,
+      t.machineId,
+      t.updatedAt
+    ),
+    userIdx: index("chat_sessions_user_idx").on(t.userId),
     deletedIdx: index("chat_sessions_deleted_idx").on(t.deletedAt)
   })
 );
@@ -269,7 +298,12 @@ export const artifactRelations = relations(reportArtifacts, ({ one }) => ({
   run: one(reportRuns, { fields: [reportArtifacts.runId], references: [reportRuns.id] })
 }));
 
-export const chatSessionsRelations = relations(chatSessions, ({ many }) => ({
+export const usersRelations = relations(users, ({ many }) => ({
+  chatSessions: many(chatSessions)
+}));
+
+export const chatSessionsRelations = relations(chatSessions, ({ one, many }) => ({
+  user: one(users, { fields: [chatSessions.userId], references: [users.id] }),
   messages: many(chatMessages)
 }));
 
