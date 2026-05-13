@@ -109,7 +109,8 @@ const LLM_TIMEOUT_MS = config.llmTimeoutMs ?? 25000;
 export const SYSTEM_PROMPT = `You are Ravi, a senior AI assistant for a Nonwoven Lamination Machine manufacturing plant.
 Audience: plant operators, electrical engineers, maintenance engineers, production managers.
 Machine: lamination-01 (v1)
-Subsystems: Extruder, Laminator, Winder, Unwinder, Splice, Production, Safety.
+Subsystems: Extruder, Laminator, Winder, Unwinder (Main + Sandwich), Hotplate,
+            Splice, Production, Safety, PLC, Web Aligner, Brush Blower.
 
 SECTION 1 — QUERY CLASSIFICATION (do this first, always)
 
@@ -244,10 +245,25 @@ SECTION 5 — FORMATTING
     MASTER_SPEED_PCT → line speed
     LAMINATOR_MPM → laminator speed
     RUNNING_METER → meters produced
-    WINDER_TENSION / LAMINATOR_TENSION → material tension
+    WINDER_TENSION_PCT → winder tension
     EMG_STOP → emergency stop
     EXTRUDER_RPM → extruder speed
     GSM → material weight (GSM)
+    HOTPLATE_CLOSE / HOTPLATE_OPEN → hotplate position
+    SANDWICH_UW_ENABLE → second film layer (sandwich unwinder)
+    CONTACT_WINDER → contact winder mode
+    WINDER_DANCER_MODE → dancer roll tension mode
+    GSM_SELECTION → GSM control mode active
+    GRAM_LOGIC_SELECTION → gram control mode active
+    LOGIC_ENABLE → machine logic gate
+    AIR_PRESSURE_LOW → pneumatic pressure fault
+    MACHINE_MAX_LINE_SPEED → maximum line speed (m/min)
+    EXTRUDER_MAX_RPM → extruder RPM ceiling
+    LAMINATOR_MAX_RPM → laminator RPM ceiling
+    UW_PV_TENSION / SUW_PV_TENSION → unwinder actual tension (raw counts)
+- Also classify these as mode/state queries and read these tags:
+    HOTPLATE_ENABLE, HOTPLATE_CLOSE, SANDWICH_UW_ENABLE, CONTACT_WINDER,
+    LOGIC_ENABLE, GSM_SELECTION, GRAM_LOGIC_SELECTION
 - "Next action" / "What to do" must be numbered steps starting with an action verb.
   Good: "1. Increase line speed to 80%."
   Bad:  "Consider adjusting the operational parameters."
@@ -556,7 +572,7 @@ function decomposeComplexQuery(msg: string): SubQuery[] {
     subQueries.push(
       { question: "What alerts fired around the fault?", tool: "get_alert_history", args: {} },
       { question: "What did RPM/speed tags show before the fault?", tool: "get_tag_history", args: { tag: "EXTRUDER_RPM" } },
-      { question: "Were there tension anomalies?", tool: "get_tag_history", args: { tag: "WINDER_TENSION" } },
+      { question: "Were there tension anomalies?", tool: "get_tag_history", args: { tag: "WINDER_TENSION_PCT" } },
       { question: "What are the fault thresholds for this tag?", tool: "get_tag_definition", args: {} }
     );
     return subQueries;
@@ -620,6 +636,7 @@ function buildHeuristicPlan(userMessage: string): AgentPlan {
   } else if (queryClass === "historical") {
     push("get_alert_history", "Load alerts in the requested time window");
     push("get_tag_history", "Load primary tag values in the window (speed, meter, RPM)");
+    // NOTE: do NOT add get_active_alerts here — it is a present-state tool and must never appear in historical plans
   } else if (queryClass === "production") {
     push("get_production_summary", "Fetch production metrics");
     if (/\b(history|yesterday|last|trend)\b/.test(userMessage.toLowerCase())) {
@@ -770,33 +787,73 @@ function reflect(toolSteps: AgentToolStep[]): {
 
 // ─── Chart Helpers ────────────────────────────────────────────────────────────
 
-/** Detect whether the user's query implies they want a trend/chart. */
-function shouldGenerateChart(userMessage: string): boolean {
+/** Detect whether the user's query implies they want a trend/chart.
+ *  Takes toolSteps to verify numeric data was actually returned before
+ *  generating a chart — prevents boolean-only charts (EMG_STOP, faults etc.).
+ */
+function shouldGenerateChart(userMessage: string, toolSteps: AgentToolStep[]): boolean {
   const m = userMessage.toLowerCase();
-  return (
+  const wantsChart =
     m.includes("trend") ||
     m.includes("history") ||
-    m.includes("last") ||
     m.includes("over time") ||
     m.includes("graph") ||
     m.includes("chart") ||
     m.includes("plot") ||
     m.includes("past") ||
-    m.includes("compare")
+    m.includes("compare");
+
+  if (!wantsChart) return false;
+
+  // Require at least one history step with real numeric (non-boolean) data
+  const historySteps = toolSteps.filter(
+    (s) => s.tool === "get_tag_history" && s.status === "success"
   );
+  const hasNumericData = historySteps.some((s) => {
+    const samples: any[] = s.result?.samples ?? [];
+    return (
+      samples.length >= 2 &&
+      samples.some((d: any) => {
+        const v = Number(d.value ?? d.val ?? NaN);
+        return !isNaN(v) && v !== 0 && v !== 1;
+      })
+    );
+  });
+
+  return hasNumericData;
 }
 
 /** Infer a display unit from a tag slug or name. */
 function inferUnit(tag: string): string {
   const t = tag.toUpperCase();
+  // Raw analog voltage — never label as engineering unit
+  if (t.includes("_VOL") || t.endsWith("_V")) return "V";
+  // Raw loadcell counts — not %
+  if (
+    t.includes("UW_PV") || t.includes("SUW_PV") ||
+    t.includes("UW_SET") || t.includes("SUW_SET")
+  ) return "counts";
   if (t.includes("PCT") || t.includes("PERCENT") || t.includes("EFFICIENCY")) return "%";
   if (t.includes("MPM")) return "m/min";
   if (t.includes("RPM")) return "RPM";
   if (t.includes("GSM")) return "g/m²";
   if (t.includes("TEMP") || t.includes("°C")) return "°C";
-  if (t.includes("TENSION")) return "%";
+  if (t.includes("TENSION_PCT") || t.includes("WINDER_TENSION")) return "%";
   if (t.includes("METER") && !t.includes("MPM")) return "m";
+  if (t.includes("AMP")) return "A";
   return "";
+}
+
+/**
+ * Compute actual line speed in m/min from speed % and max speed reference.
+ * Use when both MASTER_SPEED_PCT and MACHINE_MAX_LINE_SPEED are available.
+ * Example output: "Line speed is 82% = 98.4 m/min (max: 120 m/min, headroom: 21.6 m/min)"
+ */
+export function computeActualSpeed(
+  masterSpeedPct: number,
+  machineMaxSpeed: number
+): number {
+  return Math.round((masterSpeedPct / 100) * machineMaxSpeed * 10) / 10;
 }
 
 /**
@@ -809,15 +866,16 @@ function downsampleSeries(
 ): { x: string; y: number }[] {
   if (data.length <= maxPoints) return data;
   const bucketSize = Math.ceil(data.length / maxPoints);
-  const result: { x: string; y: number }[] = [data[0]];
+  const result: { x: string; y: number }[] = [data[0]!];
   for (let i = 1; i < data.length - 1; i += bucketSize) {
     const bucket = data.slice(i, Math.min(i + bucketSize, data.length - 1));
     const avgY = bucket.reduce((s, p) => s + p.y, 0) / bucket.length;
     // Pick the point closest to bucket midpoint for representative timestamp
     const mid = Math.floor(bucket.length / 2);
-    result.push({ x: bucket[mid].x, y: Math.round(avgY * 100) / 100 });
+    const midPoint = bucket[mid];
+    if (midPoint) result.push({ x: midPoint.x, y: Math.round(avgY * 100) / 100 });
   }
-  result.push(data[data.length - 1]);
+  result.push(data[data.length - 1]!);
   return result;
 }
 
@@ -871,7 +929,7 @@ function generateChartsFromHistory(toolSteps: AgentToolStep[]): AgentChart[] {
 
     // Build title
     const title = seriesList.length === 1
-      ? `Trend: ${seriesList[0].displayName}`
+      ? `Trend: ${seriesList[0]!.displayName}`
       : `Comparative Trend: ${seriesList.map(s => s.displayName).join(" vs ")}`;
 
     // Determine chart-level unit (use first series, or blank if mixed)
@@ -910,7 +968,8 @@ export async function runGeminiAgent(args: {
   const reflection = reflect(result.toolSteps);
 
   // Only attempt chart generation when user intent implies trend/history
-  const charts = shouldGenerateChart(args.userMessage)
+  // Pass toolSteps so boolean-only results (EMG_STOP, fault tags) are excluded
+  const charts = shouldGenerateChart(args.userMessage, result.toolSteps)
     ? generateChartsFromHistory(result.toolSteps)
     : [];
 

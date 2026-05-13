@@ -48,14 +48,20 @@ export function useDashboard(machineId: string) {
       tagsData.items.forEach((item) => {
         if (typeof item.valueNumber === 'number') {
           const key = item.slug || item.tagId;
-          // Since items are sorted by updatedAt desc, only set if not already present
           if (point[key] === undefined) {
             point[key] = item.valueNumber;
           }
         }
+        // Capture boolean tags as 0/1 for status-over-time tracking
+        if (typeof item.valueBool === 'boolean') {
+          const key = item.slug || item.tagId;
+          if (point[key] === undefined) {
+            point[key] = item.valueBool ? 1 : 0;
+          }
+        }
       });
 
-      const newHistory = [...historyRef.current, point].slice(-40);
+      const newHistory = [...historyRef.current, point].slice(-60);
       historyRef.current = newHistory;
       setHistory(newHistory);
     }
