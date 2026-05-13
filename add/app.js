@@ -1,4 +1,4 @@
-// ── TAG DEFINITIONS ──────────────────────────────────────────────────────────
+// ── TAG DEFINITIONS ────────────────────────────────────────────────────────── app.js
 const TAGS = {
     // EXTRUDER
     EXTRUDER_RPM: { addr: 401104, type: "float", fc: 3, label: "Extruder RPM", unit: "RPM", warn_hi: 80, alarm_hi: 100, section: "extruder" },

@@ -1,0 +1,26 @@
+{
+    "name": "nonwoven-agent-node",
+    "version": "2.0.0",
+    "description": "Nonwoven Lamination AI Agent — Modbus TCP + WAL Data Pipeline (Node.js)",
+    "main": "app.js",
+    "scripts": {
+        "start": "node app.js",
+        "inspect": "node wal-inspector.js",
+        "inspect:pending": "node wal-inspector.js --pending",
+        "inspect:dead": "node wal-inspector.js --dead",
+        "inspect:replay": "node wal-inspector.js --replay",
+        "inspect:purge-sent": "node wal-inspector.js --purge-sent"
+    },
+    "dependencies": {
+        "axios": "^1.6.0",
+        "dotenv": "^16.3.1",
+        "modbus-serial": "^8.0.17",
+        "uuid": "^9.0.0",
+        "winston": "^3.11.0",
+        "winston-daily-rotate-file": "^4.7.1"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "license": "MIT"
+}

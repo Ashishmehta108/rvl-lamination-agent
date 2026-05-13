@@ -1,0 +1,24 @@
+[Unit]
+Description=Nonwoven Lamination AI Agent
+After=network.target
+
+[Service]
+# Adjust User and Group if not running as 'pi'
+User=pi
+Group=pi
+
+# Adjust the path to where you placed the project
+WorkingDirectory=/home/pi/rvl-lamination-agent
+ExecStart=/usr/bin/bash /home/pi/rvl-lamination-agent/scripts/run-agent.sh
+
+# Restart the service automatically on failure
+Restart=always
+RestartSec=5
+
+# Standard output and error to journal
+StandardOutput=inherit
+StandardError=inherit
+SyslogIdentifier=lamination-agent
+
+[Install]
+WantedBy=multi-user.target

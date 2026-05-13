@@ -1,3 +1,5 @@
+
+//server.js
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -11,7 +13,8 @@ const CONFIG = {
     slaveId: parseInt(args[2]) || 1,
     webPort: 4444,
     pollInterval: 1000,
-    ingestUrl: process.env.INGEST_URL || "http://127.0.0.1:7000/ingest/tags",
+    // ingestUrl: process.env.INGEST_URL || "http://127.0.0.1:7000/ingest/tags",
+    ingestUrl: "https://sherril-exoskeletal-heinously.ngrok-free.dev/ingest/tags",
     machineId: process.env.MACHINE_ID || "lamination-01",
     machineRevision: process.env.MACHINE_REVISION || "v1",
     authToken: process.env.API_AUTH_TOKEN || "dev-local-token"
