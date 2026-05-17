@@ -34,40 +34,6 @@ export async function migrateAuthTables(): Promise<void> {
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS users_email_idx ON users (email);`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS users_tenant_idx ON users (tenant_id);`);
 
-  // ── chat_sessions — add userId + tenantId columns (idempotent) ───────────
-  await db.execute(sql`
-    ALTER TABLE chat_sessions
-      ADD COLUMN IF NOT EXISTS user_id   text REFERENCES users(id) ON DELETE RESTRICT,
-      ADD COLUMN IF NOT EXISTS tenant_id text;
-  `);
-
-  // Back-fill existing rows so NOT NULL can be enforced (dev safety net only)
-  await db.execute(sql`
-    UPDATE chat_sessions
-    SET
-      user_id   = 'system',
-      tenant_id = 'default'
-    WHERE user_id IS NULL OR tenant_id IS NULL;
-  `);
-
-  // Make the columns NOT NULL now that rows are filled
-  await db.execute(sql`
-    ALTER TABLE chat_sessions
-      ALTER COLUMN user_id   SET NOT NULL,
-      ALTER COLUMN tenant_id SET NOT NULL;
-  `);
-
-  // ── Rebuild / add indexes ────────────────────────────────────────────────
-  // Drop the old single-column machine index and replace with tenant-scoped one
-  await db.execute(sql`DROP INDEX IF EXISTS chat_sessions_machine_updated_idx;`);
-  await db.execute(sql`
-    CREATE INDEX IF NOT EXISTS chat_sessions_tenant_machine_updated_idx
-      ON chat_sessions (tenant_id, machine_id, updated_at);
-  `);
-  await db.execute(sql`
-    CREATE INDEX IF NOT EXISTS chat_sessions_user_idx ON chat_sessions (user_id);
-  `);
-
   // ── Seed the pre-built admin user (idempotent) ───────────────────────────
   const rows = await db.execute(
     sql`SELECT id FROM users WHERE email = ${SEED_EMAIL} LIMIT 1`
@@ -88,4 +54,38 @@ export async function migrateAuthTables(): Promise<void> {
       ON CONFLICT (email) DO NOTHING;
     `);
   }
+
+  // ── chat_sessions — add userId + tenantId columns (idempotent) ───────────
+  await db.execute(sql`
+    ALTER TABLE chat_sessions
+      ADD COLUMN IF NOT EXISTS user_id   text REFERENCES users(id) ON DELETE RESTRICT,
+      ADD COLUMN IF NOT EXISTS tenant_id text;
+  `);
+
+  // Back-fill existing rows so NOT NULL can be enforced (dev safety net only)
+  await db.execute(sql`
+    UPDATE chat_sessions
+    SET
+      user_id   = 'user_seed_rvl',
+      tenant_id = 'rvl'
+    WHERE user_id IS NULL OR tenant_id IS NULL;
+  `);
+
+  // Make the columns NOT NULL now that rows are filled
+  await db.execute(sql`
+    ALTER TABLE chat_sessions
+      ALTER COLUMN user_id   SET NOT NULL,
+      ALTER COLUMN tenant_id SET NOT NULL;
+  `);
+
+  // ── Rebuild / add indexes ────────────────────────────────────────────────
+  // Drop the old single-column machine index and replace with tenant-scoped one
+  await db.execute(sql`DROP INDEX IF EXISTS chat_sessions_machine_updated_idx;`);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS chat_sessions_tenant_machine_updated_idx
+      ON chat_sessions (tenant_id, machine_id, updated_at);
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS chat_sessions_user_idx ON chat_sessions (user_id);
+  `);
 }

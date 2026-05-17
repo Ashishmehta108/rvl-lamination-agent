@@ -48,10 +48,22 @@ function ToolIcon({ tool }: { tool: string }) {
 }
 
 function cleanResponseText(text: string): string {
-  let cleaned = text.replace(/^.*tagId\s*`[^`]+`.*$/gm, "");
+  let cleaned = text;
+  // Remove technical tag comments
+  cleaned = cleaned.replace(/^.*tagId\s*`[^`]+`.*$/gm, "");
   cleaned = cleaned.replace(/(?:\(Live\s+)?Tag\s+ID\s+[`(]?[\w-]+[`)h]?/gi, "");
-  cleaned = cleaned.replace(/\s—\s+tag_[\w-]+/g, "");
-  cleaned = cleaned.replace(/—\s*—+/g, "—");
+  cleaned = cleaned.replace(/\s*[—–-]\s*tag_[\w-]+/g, "");
+  
+  // Replace em-dash/en-dash with natural phrasing for common cases
+  cleaned = cleaned.replace(/\s+[—–]\s+no\s+open\s+alerts/gi, " with no open alerts");
+  cleaned = cleaned.replace(/\s+[—–]\s+line\s+is\s+clear/gi, ", line is clear");
+  cleaned = cleaned.replace(/\s+[—–]\s+list\s+only/gi, ": list only");
+  
+  // Standardize other em-dashes/en-dashes to a clean comma or simple hyphen
+  cleaned = cleaned.replace(/\s+[—–]\s+/g, ", ");
+  cleaned = cleaned.replace(/[—–]/g, "-");
+  
+  // Clean multiple line breaks
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
   return cleaned;
 }

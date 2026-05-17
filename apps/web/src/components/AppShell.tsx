@@ -18,7 +18,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100dvh", overflow: "hidden" }}>
 
       {/* ─── Desktop top navbar (md+) ─── */}
       <nav
@@ -75,7 +75,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       {/* pb-[60px] on mobile ensures content never hides behind the bottom nav */}
       <div
         className="pb-[60px] md:pb-0"
-        style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
+        style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflowY: "auto" }}
       >
         {children}
       </div>

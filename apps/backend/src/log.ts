@@ -27,8 +27,13 @@ export const log = pino(
     },
     serializers: {
       err: pino.stdSerializers.err,
-      req: pino.stdSerializers.req,
-      res: pino.stdSerializers.res,
+      req: (req: any) => ({
+        method: req.method,
+        url: req.url,
+      }),
+      res: (res: any) => ({
+        statusCode: res.statusCode,
+      }),
     },
   },
   pino.multistream([
