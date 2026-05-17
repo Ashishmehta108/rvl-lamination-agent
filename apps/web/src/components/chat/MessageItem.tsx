@@ -1,7 +1,9 @@
 import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeSanitize from "rehype-sanitize";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import { Cpu, DocumentText, Flash, SearchNormal1, TickCircle } from "iconsax-reactjs";
 import { Message, ToolStep, type ContextBlock } from "../../hooks/useChat";
 import CopyBtn from "./CopyBtn";
@@ -54,55 +56,31 @@ function cleanResponseText(text: string): string {
   return cleaned;
 }
 
-/* ── Markdown component overrides ── */
+/* ── Markdown component overrides (layout via globals.css .rvl-chat-md) ── */
 const mdComponents = {
   code(props: React.ComponentPropsWithoutRef<"code">) {
-    const { children, className, ...rest } = props as any;
+    const { children, className, ...rest } = props as React.ComponentPropsWithoutRef<"code"> & {
+      className?: string;
+    };
     const isFenced = typeof className === "string" && className.includes("language-");
     if (!isFenced) {
-      return (
-        <code style={{
-          background: "var(--surface-2)", padding: "2px 6px",
-          borderRadius: 4, fontSize: "0.88em",
-          border: "1px solid var(--border)", fontFamily: "ui-monospace, monospace",
-        }} {...rest}>{children}</code>
-      );
+      return <code {...rest}>{children}</code>;
     }
     return (
-      <pre style={{
-        margin: "12px 0", padding: "14px 16px", overflow: "auto",
-        background: "var(--surface-2)", border: "1px solid var(--border)",
-        borderRadius: 10, fontSize: 12, lineHeight: 1.6,
-      }}>
+      <pre>
         <code className={className} {...rest}>{children}</code>
       </pre>
     );
   },
   a: (props: React.ComponentPropsWithoutRef<"a">) => (
-    <a {...props} style={{ color: "var(--accent)", textDecoration: "underline" }} rel="noopener noreferrer" target="_blank" />
+    <a {...props} rel="noopener noreferrer" target="_blank" />
   ),
-  ul: (p: React.ComponentPropsWithoutRef<"ul">) => <ul {...p} style={{ margin: "6px 0", paddingLeft: 22 }} />,
-  ol: (p: React.ComponentPropsWithoutRef<"ol">) => <ol {...p} style={{ margin: "6px 0", paddingLeft: 22 }} />,
-  li: (p: React.ComponentPropsWithoutRef<"li">) => <li {...p} style={{ margin: "4px 0", lineHeight: 1.75 }} />,
-  h2: (p: React.ComponentPropsWithoutRef<"h2">) => <h2 {...p} style={{ fontSize: 15, margin: "16px 0 6px", fontWeight: 700, color: "var(--text)" }} />,
-  h3: (p: React.ComponentPropsWithoutRef<"h3">) => <h3 {...p} style={{ fontSize: 13.5, margin: "12px 0 5px", fontWeight: 600, color: "var(--text)" }} />,
-  p: (p: React.ComponentPropsWithoutRef<"p">) => <p {...p} style={{ margin: "7px 0", lineHeight: 1.8 }} />,
-  table: (p: React.ComponentPropsWithoutRef<"table">) => (
-    <div style={{ overflow: "auto", margin: "12px 0", borderRadius: 8, border: "1px solid var(--border)" }}>
-      <table {...p} style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }} />
+  table: (props: React.ComponentPropsWithoutRef<"table">) => (
+    <div className="rvl-md-table-wrap">
+      <table {...props} />
     </div>
   ),
-  th: (p: React.ComponentPropsWithoutRef<"th">) => (
-    <th {...p} style={{ padding: "8px 12px", textAlign: "left", background: "var(--surface-2)", fontWeight: 600, fontSize: 12, borderBottom: "1px solid var(--border)" }} />
-  ),
-  td: (p: React.ComponentPropsWithoutRef<"td">) => (
-    <td {...p} style={{ padding: "7px 12px", borderBottom: "1px solid var(--border-subtle)" }} />
-  ),
-  hr: () => null,
-  strong: (p: React.ComponentPropsWithoutRef<"strong">) => <strong {...p} style={{ fontWeight: 600, color: "var(--text)" }} />,
-  blockquote: (p: React.ComponentPropsWithoutRef<"blockquote">) => (
-    <blockquote {...p} style={{ borderLeft: "3px solid var(--accent)", margin: "10px 0", paddingLeft: 14, color: "var(--text-muted)", fontStyle: "italic" }} />
-  ),
+  hr: () => <hr style={{ border: "none", borderTop: "1px solid var(--border-subtle)", margin: "1.25em 0" }} />,
 };
 
 /* ── Steps panel with Vercel-style shimmer rows ── */
@@ -114,6 +92,7 @@ function StepsPanel({ steps }: { steps: ToolStep[] }) {
   return (
     <div style={{ marginBottom: 8 }}>
       <button
+        type="button"
         onClick={() => setOpen(!open)}
         style={{
           display: "inline-flex", alignItems: "center", gap: 6,
@@ -210,16 +189,15 @@ function ContextBlocksPanel({ blocks, liveTagCount }: { blocks: ContextBlock[]; 
 /* ── Markdown renderer ── */
 function AssistantMarkdown({ content }: { content: string }) {
   return (
-    <div style={{
-      fontSize: 14, lineHeight: 1.8, color: "var(--text)",
-      wordBreak: "break-word", overflowWrap: "break-word",
-      animation: "rvl-fadein .3s ease both",
-    }}>
+    <div
+      className="rvl-chat-md"
+      style={{ animation: "rvl-fadein .3s ease both" }}
+    >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeSanitize]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[[rehypeKatex, { strict: false, throwOnError: false }]]}
         skipHtml
-        components={mdComponents as any}
+        components={mdComponents as React.ComponentProps<typeof ReactMarkdown>["components"]}
       >
         {cleanResponseText(content)}
       </ReactMarkdown>
@@ -274,15 +252,12 @@ export default function MessageItem({ msg }: MessageItemProps) {
       {/* Content */}
       <div style={{ flex: 1, minWidth: 0, paddingTop: 2 }}>
 
-        {/* Tool steps */}
         {msg.steps && msg.steps.length > 0 && <StepsPanel steps={msg.steps} />}
 
-        {/* Context blocks */}
         {msg.contextBlocks && msg.contextBlocks.length > 0 && (
           <ContextBlocksPanel blocks={msg.contextBlocks} liveTagCount={msg.liveTagCount} />
         )}
 
-        {/* Tag candidates */}
         {msg.findCandidates && msg.findCandidates.length > 0 && (
           <div style={{ marginBottom: 10, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
             <span style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 600 }}>Tag matches</span>
@@ -298,7 +273,6 @@ export default function MessageItem({ msg }: MessageItemProps) {
           </div>
         )}
 
-        {/* Main response */}
         {msg.error ? (
           <div style={{ fontSize: 14, lineHeight: 1.75, color: "#ef4444", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
             {msg.content}
@@ -307,12 +281,10 @@ export default function MessageItem({ msg }: MessageItemProps) {
           <AssistantMarkdown content={msg.content} />
         )}
 
-        {/* Charts */}
         {msg.charts && msg.charts.length > 0 && (
           <MessageCharts charts={msg.charts} />
         )}
 
-        {/* Footer: grounded badge + citations */}
         {!msg.error && (msg.grounded !== undefined || (msg.citations && msg.citations.length > 0)) && (
           <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 10 }}>
             {msg.grounded !== undefined && (
@@ -346,7 +318,6 @@ export default function MessageItem({ msg }: MessageItemProps) {
           </div>
         )}
 
-        {/* Copy button */}
         <div style={{ marginTop: 8 }}>
           <CopyBtn text={msg.content} />
         </div>

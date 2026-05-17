@@ -198,11 +198,163 @@ body {
 .rvl-chip               { transition: background .15s, border-color .15s, transform .12s; }
 .rvl-chip:hover         { background: var(--surface-3) !important; border-color: var(--text-faint) !important; transform: translateY(-1px); }
 
-/* ── Chat markdown tables ─────────────────────────────────────────────────── */
+/* ── Chat markdown (assistant messages) ──────────────────────────────────── */
+.rvl-chat-md {
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text);
+  word-break: break-word;
+  overflow-wrap: break-word;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+.rvl-chat-md > *:first-child { margin-top: 0; }
+.rvl-chat-md > *:last-child { margin-bottom: 0; }
+
+.rvl-chat-md p {
+  margin: 0.65em 0;
+  line-height: 1.8;
+  text-align: justify;
+  text-justify: inter-word;
+}
+
+.rvl-chat-md h2 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 1.35em 0 0.5em;
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid var(--border-subtle);
+  letter-spacing: -0.01em;
+}
+
+.rvl-chat-md h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 1.1em 0 0.4em;
+}
+
+.rvl-chat-md strong {
+  font-weight: 650;
+  color: var(--text);
+}
+
+.rvl-chat-md blockquote {
+  margin: 0.85em 0 1.1em;
+  padding: 0.85em 1.15em;
+  text-align: center;
+  border-left: none;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface-2));
+  font-style: normal;
+  color: var(--text);
+  line-height: 1.65;
+}
+
+.rvl-chat-md blockquote p {
+  text-align: center;
+  margin: 0;
+}
+
+.rvl-chat-md ul,
+.rvl-chat-md ol {
+  margin: 0.5em 0 0.85em;
+  padding-left: 1.35em;
+}
+
+.rvl-chat-md li {
+  margin: 0.35em 0;
+  line-height: 1.75;
+  text-align: left;
+}
+
+.rvl-chat-md li::marker {
+  color: var(--accent);
+}
+
+.rvl-chat-md table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  margin: 0.85em 0;
+}
+
+.rvl-chat-md .rvl-md-table-wrap {
+  overflow-x: auto;
+  margin: 0.85em 0;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
 .rvl-chat-md table td,
-.rvl-chat-md table th { border-color: var(--border); }
+.rvl-chat-md table th {
+  border-color: var(--border);
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.rvl-chat-md table th {
+  background: var(--surface-2);
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .rvl-chat-md tr:last-child td { border-bottom: none; }
-.rvl-chat-md pre { tab-size: 2; }
+.rvl-chat-md tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--surface-2) 50%, transparent);
+}
+
+.rvl-chat-md pre {
+  tab-size: 2;
+  margin: 0.85em 0;
+  padding: 14px 16px;
+  overflow: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.rvl-chat-md code {
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 0.88em;
+}
+
+.rvl-chat-md :not(pre) > code {
+  background: var(--surface-2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.rvl-chat-md a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* KaTeX */
+.rvl-chat-md .katex {
+  font-size: 1.05em;
+}
+
+.rvl-chat-md .katex-display {
+  margin: 1em auto;
+  padding: 0.65em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-align: center;
+}
+
+.rvl-chat-md .katex-display > .katex {
+  text-align: center;
+}
 
 
 /* ── Responsive layout helpers ───────────────────────────────────────────── */

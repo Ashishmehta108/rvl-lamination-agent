@@ -654,16 +654,57 @@ async function getTagHistory(args: ToolArgs, defaultMachineId: string) {
   };
 }
 
+type AlertResolution = {
+  source?: string;
+  actor?: string;
+  at?: string;
+  tagSlug?: string;
+  value?: number;
+  unit?: string | null;
+  clearedKind?: string;
+  clearedSide?: string;
+  threshold?: number;
+  reason?: string;
+};
+
+function resolutionFromPayload(payload: unknown): AlertResolution | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const resolution = (payload as JsonRecord).resolution;
+  if (typeof resolution !== "object" || resolution === null) return null;
+  return resolution as AlertResolution;
+}
+
+function statusReasonForAlert(
+  status: string,
+  resolution: AlertResolution | null,
+  acks: Array<{ actor: string; note: string | null; createdAt: Date }>,
+): string | undefined {
+  if (status === "resolved" && resolution?.reason) return resolution.reason;
+  if (status === "acknowledged" && acks.length) {
+    const latest = acks[acks.length - 1]!;
+    const note = latest.note ? `: ${latest.note}` : "";
+    return `Acknowledged by ${latest.actor}${note}`;
+  }
+  return undefined;
+}
+
 async function alertRowsWithTags(
   alerts: Array<typeof schema.alertEvents.$inferSelect>,
 ) {
   const db = getPostgresDb();
   if (!alerts.length) return [];
   const ids = alerts.map((alert) => alert.id);
-  const tags = await db
-    .select()
-    .from(schema.alertTags)
-    .where(inArray(schema.alertTags.alertEventId, ids));
+  const [tags, ackRows] = await Promise.all([
+    db
+      .select()
+      .from(schema.alertTags)
+      .where(inArray(schema.alertTags.alertEventId, ids)),
+    db
+      .select()
+      .from(schema.acknowledgements)
+      .where(inArray(schema.acknowledgements.alertEventId, ids))
+      .orderBy(schema.acknowledgements.createdAt),
+  ]);
   const tagsByAlert = new Map<
     string,
     Array<typeof schema.alertTags.$inferSelect>
@@ -673,27 +714,56 @@ async function alertRowsWithTags(
     list.push(tag);
     tagsByAlert.set(tag.alertEventId, list);
   }
-  return alerts.map((alert) => ({
-    id: alert.id,
-    severity: alert.severity,
-    status: alert.status,
-    title: alert.title,
-    description: alert.description,
-    startsAt: alert.startsAt.toISOString(),
-    endsAt: alert.endsAt?.toISOString() ?? null,
-    durationMinutes: Math.round(
-      ((alert.endsAt ?? new Date()).getTime() - alert.startsAt.getTime()) /
-        60_000,
-    ),
-    tags: (tagsByAlert.get(alert.id) ?? []).map((tag) => ({
-      tagId: tag.tagId,
-      value:
-        typeof tag.tagSnapshot === "object" && tag.tagSnapshot !== null
-          ? ((tag.tagSnapshot as JsonRecord).value ?? tag.tagSnapshot)
-          : tag.tagSnapshot,
-    })),
-    llmAnalysis: alert.llmAnalysis,
-  }));
+  const acksByAlert = new Map<
+    string,
+    Array<typeof schema.acknowledgements.$inferSelect>
+  >();
+  for (const ack of ackRows) {
+    const list = acksByAlert.get(ack.alertEventId) ?? [];
+    list.push(ack);
+    acksByAlert.set(ack.alertEventId, list);
+  }
+  return alerts.map((alert) => {
+    const acknowledgements = (acksByAlert.get(alert.id) ?? []).map((ack) => ({
+      actor: ack.actor,
+      note: ack.note,
+      createdAt: ack.createdAt.toISOString(),
+    }));
+    const resolution = resolutionFromPayload(alert.payload);
+    const statusReason = statusReasonForAlert(
+      alert.status,
+      resolution,
+      acknowledgements.map((ack) => ({
+        actor: ack.actor,
+        note: ack.note,
+        createdAt: new Date(ack.createdAt),
+      })),
+    );
+    return {
+      id: alert.id,
+      severity: alert.severity,
+      status: alert.status,
+      title: alert.title,
+      description: alert.description,
+      startsAt: alert.startsAt.toISOString(),
+      endsAt: alert.endsAt?.toISOString() ?? null,
+      durationMinutes: Math.round(
+        ((alert.endsAt ?? new Date()).getTime() - alert.startsAt.getTime()) /
+          60_000,
+      ),
+      tags: (tagsByAlert.get(alert.id) ?? []).map((tag) => ({
+        tagId: tag.tagId,
+        value:
+          typeof tag.tagSnapshot === "object" && tag.tagSnapshot !== null
+            ? ((tag.tagSnapshot as JsonRecord).value ?? tag.tagSnapshot)
+            : tag.tagSnapshot,
+      })),
+      acknowledgements,
+      resolution,
+      statusReason,
+      llmAnalysis: alert.llmAnalysis,
+    };
+  });
 }
 
 async function getActiveAlerts(args: ToolArgs, defaultMachineId: string) {

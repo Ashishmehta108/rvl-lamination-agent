@@ -8,6 +8,7 @@ export interface ToolStep {
   tool: string;
   label: string;
   durationMs: number;
+  status?: "success" | "error" | "timeout" | "skipped";
 }
 
 export interface ContextBlock {

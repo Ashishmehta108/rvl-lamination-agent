@@ -151,10 +151,15 @@ HISTORICAL queries — mandatory tool sequence:
   3. get_tag_definition — only if a threshold breach is suspected from step 2
   Never call get_all_live_tags or get_machine_status for historical queries.
 
-CURRENT / STATUS queries — mandatory tool sequence:
-  1. get_machine_status — always first for any status query
-  2. get_active_alerts — if alerts are mentioned or machine is not healthy
-  3. get_all_live_tags or get_live_tag_values — if specific tag values requested
+For CURRENT / STATUS / "WHAT'S WRONG" queries — mandatory tool sequence:
+  Triggers: "what is the issue", "what's going on", "any problems", "is something wrong",
+  "current situation", "status", "right now" — even when the user does not say "today".
+  1. get_machine_status — always first
+  2. get_active_alerts with status "open" — always second for issue/status questions
+  3. get_all_live_tags or get_live_tag_values — only if specific tag values are requested
+  FORBIDDEN on CURRENT queries: get_alert_history with 24h/7d defaults (pulls yesterday's
+  resolved alerts). Use get_alert_history ONLY when the user names a past date or time window.
+  For "today" without a past window, use from={today}T00:00:00+05:30 and to=now — never 24h.
 
 DIAGNOSTIC / ROOT CAUSE queries — mandatory tool sequence:
   1. get_alert_history — for the event window
@@ -175,12 +180,24 @@ SECTION 3 — ANSWER CONSTRUCTION (critical)
 Your final answer MUST synthesize ALL tool results called in this conversation.
 Do not summarize only the last tool. Do not discard earlier tool results.
 
-Structure every answer in this order:
-  1. One-sentence verdict — plain language, what is happening RIGHT NOW or what happened.
-  2. Evidence table — key values from tool results with timestamps.
-  3. What this means — explain in simple terms what the data tells an operator.
-  4. Bottom line — one sentence conclusion: is this serious, minor, or needs action?
-  5. What to do — concrete, step-by-step operator actions. No vague advice.
+Answer shape (adapt to query type — do not force five sections on a simple status check):
+
+CURRENT / "what's going on" (keep short, under 20 lines):
+  1. **Verdict** — one sentence: healthy, degraded, or stopped; mention open faults first.
+  2. **Right now** — compact table: subsystem | key reading | status (only tags that matter).
+  3. **Open alerts** — list only OPEN alerts from get_active_alerts; if none, say "No open alerts."
+     Do NOT list yesterday's or last week's resolved alerts unless the user asked for history.
+     Do NOT treat resolved alerts as current problems on CURRENT queries.
+     For resolved alerts in history, explain clearance using resolution.reason from tool data.
+     For acknowledged alerts, cite the operator note via statusReason or acknowledgements (latest entry).
+  4. **What to do** — numbered steps only if action is needed; skip if all clear.
+
+HISTORICAL / DIAGNOSTIC (use full structure):
+  1. One-sentence verdict for that time window.
+  2. Evidence table with timestamps (IST).
+  3. What this means in plain language.
+  4. Bottom line — serious, minor, or needs action.
+  5. What to do — numbered operator steps.
 
 TONE RULES (critical — follow every time):
   - Write for a plant floor operator, NOT an electrical engineer. Use plain, simple English.
@@ -205,6 +222,11 @@ For DIAGNOSTIC queries:
   Example: "The extruder slowed down first, then the laminator followed, then the winder tension rose."
   If values moved together, say "both dropped at the same time". If not, say "they moved independently".
 
+Alert status from tool data (get_active_alerts / get_alert_history):
+  - status=resolved → use resolution.reason (auto-cleared when the tag returned in range); do not list as an active problem on CURRENT queries.
+  - status=acknowledged → use statusReason or the latest acknowledgements entry (actor + note).
+  - status=open → describe the breach from title/description; statusReason may be omitted.
+
 Explicit rules to never break:
   - Never report current live values as the answer to a historical question.
   - Never say "all systems normal" when you have not checked the relevant time window.
@@ -228,16 +250,32 @@ For active faults right now:
   - Do not bury safety findings inside a table.
 
 ═══════════════════════════════════════════════════════
-SECTION 5 — FORMATTING
+SECTION 5 — FORMATTING (Markdown + math; rendered in the chat UI)
 ═══════════════════════════════════════════════════════
 
-- Lead with the verdict sentence, not a greeting or preamble.
-- Use compact Markdown tables for tag values. Columns: Tag | Value | Timestamp | Status
-- Use bullet points only for lists of 3+ items.
-- Bold critical findings: **Emergency stop active**, **no alerts fired**, **Winder fault at 13:42**
+Structure (use every time; no plain wall of text):
+- Open with a blockquote verdict (one sentence, **bold** the key outcome inside it):
+  > **Verdict:** The line is running normally with no open alerts.
+- Then ## section headers with blank lines between sections (e.g. "## Right now", "## Open alerts", "## What to do").
+- Put tag/sensor data in GFM pipe tables only (header row + separator). Example columns: Tag | Value | Time (IST) | Status
+- Use numbered lists starting with "1." for operator actions; use "-" bullets only for 3+ equal items.
+- **Bold** all critical findings: faults, emergency stop, severity, threshold breaches, times.
+- Leave a blank line before and after each table, list, and display-math block.
+
+Typography rules:
+- Lead with the verdict blockquote, not a greeting or preamble.
 - Do not show raw boolean values (0/1). Use: ON/OFF, Active/Clear, Fault/Clear.
-- Do not duplicate data across multiple formats in the same response.
-- Timestamps: always show in IST (Asia/Kolkata), format HH:MM IST.
+- Do not duplicate the same data in prose and table.
+- Timestamps: IST (Asia/Kolkata), format HH:MM IST in tables and prose.
+- Keep line length readable (~80 chars in prose); one idea per paragraph.
+
+Math (KaTeX — use when a formula clarifies numbers):
+- Inline math with single dollars: $\\text{efficiency} = \\frac{\\text{actual}}{\\text{target}} \\times 100$
+- Display math on its own line with double dollars:
+  $$\\text{line speed (m/min)} = \\frac{\\text{MASTER\\_SPEED\\_PCT}}{100} \\times \\text{max line speed}$$
+- Use for efficiency %, speed/RPM conversions, threshold comparisons, GSM deltas.
+- Escape underscores inside math with backslash (example: \\text{WINDER\\_TENSION\\_PCT}).
+- Do not use HTML tags; Markdown + LaTeX only.
 - Tag names in tables are fine (MASTER_SPEED_PCT), but in prose always use plain names:
     MASTER_SPEED_PCT → line speed
     LAMINATOR_MPM → laminator speed
@@ -282,25 +320,106 @@ RESPONSE LENGTH RULES:
     Use one table per subsystem: Subsystem | Tag | Value | Unit | Status | Timestamp.
     Do NOT omit any tag. Do NOT say "key tags only". Show them all.`;
 
-function buildSystemPrompt(): string {
-  const now = new Date();
-  const indiaDate = new Intl.DateTimeFormat("en-IN", {
+/** Asia/Kolkata calendar day bounds for tool args and prompt anchoring. */
+function getIstTodayWindow(now = new Date()): {
+  dateOnly: string;
+  fromIso: string;
+  toIso: string;
+  todayLabel: string;
+  indiaDateTime: string;
+} {
+  const dateOnly = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Kolkata",
-    dateStyle: "full",
-    timeStyle: "short"
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
   }).format(now);
-  const today = new Intl.DateTimeFormat("en-GB", {
+  const todayLabel = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Kolkata",
     weekday: "long",
     year: "numeric",
     month: "long",
     day: "numeric"
   }).format(now);
+  const indiaDateTime = new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    dateStyle: "full",
+    timeStyle: "short"
+  }).format(now);
+  return {
+    dateOnly,
+    fromIso: `${dateOnly}T00:00:00+05:30`,
+    toIso: now.toISOString(),
+    todayLabel,
+    indiaDateTime
+  };
+}
 
-  return `${SYSTEM_PROMPT}
+function userNamesExplicitPastWindow(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return /\b(yesterday|last week|last month|last shift|last hour|last \d|on \d{1,2}|april|may|june|july|august|september|october|november|december|between|from .+ to|\d{4}-\d{2}-\d{2}|at \d{1,2}:\d{2}|what happened|when we|that day)\b/.test(
+    m
+  );
+}
 
-Today is ${today} in Asia/Kolkata.
-Current date/time: ${now.toISOString()} UTC (${indiaDate} IST).
+function buildRuntimePlanContext(
+  queryClass: QueryClass,
+  userMessage: string,
+  plan: AgentPlan
+): string {
+  const { dateOnly, fromIso, toIso, todayLabel } = getIstTodayWindow();
+  const lines: string[] = [
+    "",
+   
+    "RUNTIME CONTEXT (this request only — follow over generic defaults)",
+   
+    `Query class: ${queryClass.toUpperCase()}`,
+    `User message: ${userMessage.slice(0, 500)}`,
+    `Today's calendar date (IST): ${dateOnly} (${todayLabel})`,
+    `Today's window for alert history when needed: from=${fromIso}, to=${toIso}`
+  ];
+
+  if (queryClass === "current") {
+    lines.push(
+      "Investigation order: get_machine_status → get_active_alerts (status=open).",
+      "Do NOT call get_alert_history unless the user named a past date or time.",
+      "In your answer, report OPEN alerts and live faults only — not old resolved alerts from prior days."
+    );
+  } else if (queryClass === "historical") {
+    lines.push(
+      "Use get_alert_history and get_tag_history for the user's stated window only.",
+      "Do NOT use get_machine_status or get_active_alerts as the primary answer."
+    );
+  } else if (queryClass === "diagnostic") {
+    lines.push(
+      "Build a causal chain from tool evidence in time order.",
+      userNamesExplicitPastWindow(userMessage)
+        ? "User named a past window — anchor all history tools to that window."
+        : `No explicit past window — prefer today's IST range (${fromIso} → now) unless tools show a clear event time.`
+    );
+  }
+
+  if (plan.steps.length) {
+    lines.push("Suggested plan steps (you may adapt if evidence requires it):");
+    for (const step of plan.steps) {
+      if (step.tool) lines.push(`- ${step.tool}: ${step.description}`);
+      else lines.push(`- ${step.description}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function buildSystemPrompt(plan?: AgentPlan, queryClass?: QueryClass, userMessage?: string): string {
+  const now = new Date();
+  const { todayLabel, indiaDateTime, fromIso, toIso, dateOnly } = getIstTodayWindow(now);
+
+  let prompt = `${SYSTEM_PROMPT}
+
+Today is ${todayLabel} in Asia/Kolkata.
+Current date/time: ${now.toISOString()} UTC (${indiaDateTime} IST).
+Today's IST date (YYYY-MM-DD): ${dateOnly}
+Today's alert window (if you must use get_alert_history for "today"): from ${fromIso} to ${toIso}
 
 Date handling rules:
 - Use the current date above. Do not rely on your training-time date.
@@ -309,7 +428,14 @@ Date handling rules:
 - Examples:
   - "alerts on 27 April 2026" -> from 2026-04-27T00:00:00+05:30, to 2026-04-28T00:00:00+05:30.
   - "critical alerts yesterday" -> use the full previous local day and severity critical.
-- Never say a requested date is future unless it is after the current date/time shown above.`;
+- Never say a requested date is future unless it is after the current date/time shown above.
+- "What is the issue" / "what's going on" / "any problems" = CURRENT (live data), not encyclopedia.`;
+
+  if (plan && queryClass && userMessage) {
+    prompt += buildRuntimePlanContext(queryClass, userMessage, plan);
+  }
+
+  return prompt;
 }
 
 // ─── Tool Declarations ────────────────────────────────────────────────────────
@@ -349,7 +475,8 @@ export const ALL_TOOL_DECLARATIONS: FunctionDeclaration[] = [
   },
   {
     name: "get_active_alerts",
-    description: "Fetch currently open, acknowledged, resolved, or recently triggered alerts. Use this for current alert state.",
+    description:
+      "Present-state alerts. Prefer this for 'what is wrong', 'any issues', 'status'. Default status=open. Do not use get_alert_history with 24h for these questions.",
     parameters: {
       type: SchemaType.OBJECT,
       properties: {
@@ -363,7 +490,7 @@ export const ALL_TOOL_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: "get_alert_history",
     description:
-      "Fetch historical alerts with optional time range. Use this for questions like alerts on a date, alerts yesterday, alerts last week. Reads Postgres alert_events first; recomputing breaches from Mongo tag samples is expensive and runs only when no persisted rows match (unless includeSampleDerivedThresholds=true).",
+      "Historical alerts for an explicit time window only (named date, yesterday, shift, between X and Y). NOT for 'what is going on now' — use get_active_alerts instead. Default from=24h is for undated history requests only; for 'today' use from=YYYY-MM-DDT00:00:00+05:30 to now.",
     parameters: {
       type: SchemaType.OBJECT,
       properties: {
@@ -507,7 +634,7 @@ const RE_CLASSIFY_ALL_TAGS =
 const RE_CLASSIFY_INFORMATIONAL_PREFIX =
   /^(what is|who is|how does|explain|define|tell me about|describe)\b/;
 const RE_CLASSIFY_INFORMATIONAL_DENY =
-  /\b(current|live|now|status|alert|fault|running|value|reading|rpm|mpm|tension|meter)\b/;
+  /\b(current|live|now|status|alert|fault|running|value|reading|rpm|mpm|tension|meter|issue|problem|wrong|happening|going on|machine|line|plant|tripped|stopped)\b/;
 const RE_CLASSIFY_DIAGNOSTIC =
   /\b(why|cause|root cause|explain why|what caused|drop.*and|fault.*and|after.*fault|before.*alarm|correlat|relate|impact|effect on|led to)\b/;
 const RE_CLASSIFY_DIAGNOSTIC_AND_FOLLOW =
@@ -517,7 +644,7 @@ const RE_CLASSIFY_HISTORICAL =
 const RE_CLASSIFY_PRODUCTION =
   /\b(production|meter|gsm|efficiency|output|how many|how much produced)\b/;
 const RE_CLASSIFY_CURRENT =
-  /\b(current|live|now|right now|status|is.*running|active alert|what is|reading|value)\b/;
+  /\b(current|live|now|right now|status|is.*running|active alert|reading|value|issue|problem|wrong|going on|what's happening|happening now|any problem|something wrong)\b/;
 
 function hasSecondQuestionMark(s: string): boolean {
   const first = s.indexOf("?");
@@ -592,6 +719,7 @@ Read the message once, then pick the single best label using the rules below. Ou
 
 **current**
 - Default when none of the above clearly wins: present status, "what is running now", live values for a few tags, "any open alerts" without a past date.
+- "What is the issue", "what's going on", "any problems", "is something wrong" → **current** (live machine data), never informational.
 
 ## Tie-breakers (apply in order)
 1) If text clearly asks for **every** tag → all_tags.
@@ -608,7 +736,9 @@ Read the message once, then pick the single best label using the rules below. Ou
 - "Alerts on 12 May 2026" → historical
 - "Why did production drop after the winder fault?" → diagnostic
 - "How many meters today?" → production (if no explicit historical window) OR current if clearly "so far this run"
-- "Is the extruder running?" → current`;
+- "Is the extruder running?" → current
+- "What is the issue going on?" → current
+- "Anything wrong with the line?" → current`;
 
 function parseQueryClassFromModelText(raw: string): QueryClass | null {
   const trimmed = raw
@@ -690,7 +820,12 @@ async function classifyQueryWithSmallModel(
   logger: FastifyBaseLogger
 ): Promise<QueryClass> {
   if (!msg.trim()) return "current";
-  if (config.queryClassifierMode === "regex") return classifyQueryWithRegex(msg);
+  console.log(`\x1b[35m[Agent Classifier]\x1b[0m Classifying query: "${msg.slice(0, 80)}${msg.length > 80 ? '...' : ''}"`);
+  if (config.queryClassifierMode === "regex") {
+    const res = classifyQueryWithRegex(msg);
+    console.log(`\x1b[35m[Agent Classifier]\x1b[0m Mode: regex | Result: ${res}`);
+    return res;
+  }
   try {
     const timeoutMs = config.queryClassifierTimeoutMs;
     const fromModel =
@@ -699,13 +834,16 @@ async function classifyQueryWithSmallModel(
         : await classifyQueryWithBedrock(msg, timeoutMs);
     if (fromModel) {
       logger.debug({ queryClass: fromModel, classifier: "model" }, "query_classified");
+      console.log(`\x1b[35m[Agent Classifier]\x1b[0m Mode: model (${config.aiProvider}) | Result: ${fromModel}`);
       return fromModel;
     }
   } catch (err) {
     logger.warn({ err: String(err) }, "query_classifier_failed");
+    console.error(`\x1b[31m[Agent Classifier]\x1b[0m Model classification failed: ${err}`);
   }
   const fallback = classifyQueryWithRegex(msg);
   logger.debug({ queryClass: fallback, classifier: "regex_fallback" }, "query_classified");
+  console.log(`\x1b[35m[Agent Classifier]\x1b[0m Mode: regex_fallback | Result: ${fallback}`);
   return fallback;
 }
 
@@ -797,7 +935,7 @@ The downstream agent will execute your steps in order, then **synthesize** a sin
 ## Reasoning contract (follow mentally, then encode as steps)
 
 1. **Frame** — What is the user really asking (symptom, window, subsystem, comparison)? What would falsify a wrong guess?
-2. **Anchor in time or mode** — If the question is about the past, anchor with \`from\`/\`to\` (ISO +05:30 or relative: "24h", "8h", "7d"). If "now", prefer \`get_machine_status\` / \`get_active_alerts\` before deep history.
+2. **Anchor in time or mode** — If the question is about the past, anchor with \`from\`/\`to\` (ISO +05:30). If "now" or "what's wrong", use \`get_machine_status\` then \`get_active_alerts\` (status=open); avoid \`get_alert_history\` with 24h. For undated "today", use IST midnight → now, not 24h.
 3. **Evidence chain** — Order steps so later steps **depend** on earlier context: e.g. resolve ambiguous names (\`search_tags\`) before \`get_tag_definition\` / \`get_tag_history\`; load alerts in the window before pulling trends that explain them.
 4. **Narrow** — Prefer a few **high-signal** tags over \`get_all_live_tags\` unless the user asked for everything.
 5. **Cross-check** — When comparing causes (speed vs tension vs fault), use \`get_tag_comparison\` or aligned \`get_tag_history\` with the **same** time window in \`args\`.
@@ -917,8 +1055,11 @@ async function resolveDiagnosticSubQueries(
   userMessage: string,
   logger: FastifyBaseLogger,
 ): Promise<SubQuery[]> {
+  console.log(`\x1b[36m[Agent Decomposer]\x1b[0m Resolving diagnostic sub-queries for complex request...`);
   if (config.queryClassifierMode === "regex") {
-    return decomposeComplexQuery(userMessage);
+    const res = decomposeComplexQuery(userMessage);
+    console.log(`\x1b[36m[Agent Decomposer]\x1b[0m Mode: regex | Steps resolved:`, res.map(r => r.question));
+    return res;
   }
   try {
     const timeoutMs = config.queryDecomposerTimeoutMs;
@@ -928,36 +1069,45 @@ async function resolveDiagnosticSubQueries(
         { stepCount: fromModel.length, decomposer: "bedrock" },
         "query_decomposed",
       );
+      console.log(`\x1b[36m[Agent Decomposer]\x1b[0m Mode: bedrock | Steps resolved:`, fromModel.map(r => r.question));
       return fromModel;
     }
   } catch (err) {
     logger.warn({ err: String(err) }, "query_decomposer_failed");
+    console.error(`\x1b[31m[Agent Decomposer]\x1b[0m Bedrock decomposition failed: ${err}`);
   }
   const fallback = decomposeComplexQuery(userMessage);
   logger.debug(
     { stepCount: fallback.length, decomposer: "regex_fallback" },
     "query_decomposed",
   );
+  console.log(`\x1b[36m[Agent Decomposer]\x1b[0m Mode: regex_fallback | Steps resolved:`, fallback.map(r => r.question));
   return fallback;
 }
 
-// ─── Heuristic planner ────────────────────────────────────────────────────────
-// Classifies query → (optionally) decomposes → builds observable plan.
-// The actual tool calls are still driven by the LLM; this is for
-// observability, guardrails, and injecting decomposed context into the prompt.
+// ─── Agent planner ────────────────────────────────────────────────────────────
+// Classifies query (small LLM by default) → builds plan → injects runtime context
+// into the system prompt. Tool calls are still chosen by the main model, with
+// guardrails (e.g. today's alert window) applied at execution time.
 
-async function buildHeuristicPlan(
+async function buildAgentPlan(
   userMessage: string,
   logger: FastifyBaseLogger,
-): Promise<AgentPlan> {
+): Promise<{ plan: AgentPlan; queryClass: QueryClass }> {
+  console.log(`\x1b[34m[Agent Planner]\x1b[0m Building operational plan for: "${userMessage}"`);
   const queryClass = await classifyQueryWithSmallModel(userMessage, logger);
 
   if (queryClass === "informational") {
-    return {
-      intent: "Informational — answerable from knowledge, no tools needed",
-      requiresTools: false,
-      steps: [{ id: "s1", description: "Answer from knowledge", status: "pending" }]
+    const result = {
+      queryClass,
+      plan: {
+        intent: "Informational — answerable from knowledge, no tools needed",
+        requiresTools: false,
+        steps: [{ id: "s1", description: "Answer from knowledge", status: "pending" as const }]
+      }
     };
+    console.log(`\x1b[34m[Agent Planner]\x1b[0m Plan generated for informational query (No tools needed).`);
+    return result;
   }
 
   const steps: PlanStep[] = [];
@@ -966,48 +1116,71 @@ async function buildHeuristicPlan(
     steps.push({ id: `s${++id}`, tool, description, status: "pending" });
 
   if (queryClass === "all_tags") {
-    // User explicitly asked for every tag — one tool only.
-    // The model will render the complete grouped table from its output.
     push("get_all_live_tags", "Fetch ALL live tag values grouped by subsystem");
   } else if (queryClass === "diagnostic") {
     const subQueries = await resolveDiagnosticSubQueries(userMessage, logger);
     for (const sq of subQueries) {
       push(sq.tool, sq.question);
     }
-    // Always add correlation step at end
-    steps.push({ id: `s${++id}`, description: "Correlate findings and generate root cause + recommendation", status: "pending" });
+    steps.push({
+      id: `s${++id}`,
+      description: "Synthesize root cause and operator actions from evidence",
+      status: "pending"
+    });
   } else if (queryClass === "historical") {
     push("get_alert_history", "Load alerts in the requested time window");
     push("get_tag_history", "Load primary tag values in the window (speed, meter, RPM)");
-    // NOTE: do NOT add get_active_alerts here — it is a present-state tool and must never appear in historical plans
   } else if (queryClass === "production") {
-    push("get_production_summary", "Fetch production metrics");
-    if (/\b(history|yesterday|last|trend)\b/.test(userMessage.toLowerCase())) {
-      push("get_tag_history", "Load historical speed/meter trends");
+    push("get_production_summary", "Fetch production metrics for the relevant window");
+    if (queryClass === "production" && userNamesExplicitPastWindow(userMessage)) {
+      push("get_tag_history", "Load speed/meter trends for the stated past window");
     }
   } else {
-    // current (default)
-    push("get_machine_status", "Check overall machine health");
-    if (/\b(alert|alarm|fault|warning)\b/.test(userMessage.toLowerCase())) {
-      push("get_active_alerts", "Check active alerts");
-    }
-    if (/\b(tag|value|reading|live)\b/.test(userMessage.toLowerCase())) {
-      push("get_all_live_tags", "Fetch all live tag values");
-    }
-    if (!steps.some(s => s.tool === "get_active_alerts")) {
-      push("get_active_alerts", "Check active alerts");
-    }
+    // current — fixed live-data path; model chooses extra tags if needed
+    push("get_machine_status", "Establish live machine health and subsystem state");
+    push("get_active_alerts", "List open alerts only (status=open)");
   }
 
-  // Threshold check: add only when explicitly needed
-  if (/\b(threshold|limit|config|spec|definition)\b/.test(userMessage.toLowerCase())) {
-    push("get_tag_definition", "Get tag threshold configuration");
-  }
-
-  return {
+  const plan = {
     intent: `[${queryClass.toUpperCase()}] ${userMessage.slice(0, 100)}`,
     requiresTools: true,
     steps
+  };
+
+  console.log(`\x1b[34m[Agent Planner]\x1b[0m Generated Plan [${queryClass.toUpperCase()}]:`);
+  for (const step of plan.steps) {
+    console.log(`  - \x1b[33m${step.id}\x1b[0m: [${step.tool || 'NO TOOL'}] ${step.description}`);
+  }
+
+  return {
+    queryClass,
+    plan
+  };
+}
+
+/** Scope alert history to today IST when the user did not ask for a past window. */
+function normalizeToolArgsForQuery(
+  name: string,
+  args: Record<string, unknown>,
+  ctx: { queryClass: QueryClass; userMessage: string }
+): Record<string, unknown> {
+  if (name !== "get_alert_history") return args;
+  if (ctx.queryClass === "historical" || userNamesExplicitPastWindow(ctx.userMessage)) {
+    return args;
+  }
+
+  const from = args.from;
+  const fromStr = typeof from === "string" ? from.trim().toLowerCase() : "";
+  const vagueDefault =
+    !fromStr || fromStr === "24h" || fromStr === "8h" || fromStr === "7d" || fromStr === "1d";
+
+  if (!vagueDefault) return args;
+
+  const { fromIso, toIso } = getIstTodayWindow();
+  return {
+    ...args,
+    from: fromIso,
+    to: typeof args.to === "string" && args.to.trim() ? args.to : toIso
   };
 }
 
@@ -1022,8 +1195,12 @@ async function runTool(opts: {
   cache: Map<string, unknown>;
   toolSteps: AgentToolStep[];
   toolsUsed: string[];
+  queryClass: QueryClass;
+  userMessage: string;
 }): Promise<{ functionResponse: { name: string; response: { result?: unknown; error?: string } } }> {
-  const { name, args, machineId, sessionId, logger, cache, toolSteps, toolsUsed } = opts;
+  const { name, machineId, sessionId, logger, cache, toolSteps, toolsUsed, queryClass, userMessage } =
+    opts;
+  const args = normalizeToolArgsForQuery(name, opts.args, { queryClass, userMessage });
   const cacheKey = toolCacheKey(name, args);
 
   // Deduplication: same tool+args within one request returns cached result
@@ -1036,12 +1213,14 @@ async function runTool(opts: {
       status: "skipped",
       attempt: 0
     });
+    console.log(`\x1b[32m[Agent Tool]\x1b[0m \x1b[36m[CACHED]\x1b[0m Tool "${name}" using cached result. Args:`, args);
     return { functionResponse: { name, response: { result: cache.get(cacheKey) } } };
   }
 
   let lastError = "";
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const startedAt = Date.now();
+    console.log(`\x1b[32m[Agent Tool]\x1b[0m \x1b[33m[Attempt ${attempt}/${MAX_RETRIES}]\x1b[0m Invoking "${name}" with args:`, args);
     try {
       const result = await withTimeout(
         executeLoggedTool({ name, toolArgs: args, machineId, sessionId, logger }),
@@ -1052,6 +1231,7 @@ async function runTool(opts: {
       cache.set(cacheKey, result);
       toolsUsed.push(name);
       toolSteps.push({ tool: name, label: labelForTool(name), args, durationMs, status: "success", attempt, result });
+      console.log(`\x1b[32m[Agent Tool]\x1b[0m \x1b[32m[SUCCESS]\x1b[0m Tool "${name}" succeeded in ${durationMs}ms.`);
       return { functionResponse: { name, response: { result } } };
     } catch (error) {
       const durationMs = Math.max(1, Date.now() - startedAt);
@@ -1070,9 +1250,11 @@ async function runTool(opts: {
           attempt,
           error: lastError
         });
+        console.error(`\x1b[31m[Agent Tool]\x1b[0m \x1b[31m[FAILED]\x1b[0m Tool "${name}" failed permanently after ${attempt} attempts in ${durationMs}ms. Error: ${lastError}`);
         return { functionResponse: { name, response: { error: lastError } } };
       }
 
+      console.warn(`\x1b[33m[Agent Tool]\x1b[0m \x1b[33m[RETRYING]\x1b[0m Tool "${name}" failed on attempt ${attempt} in ${durationMs}ms. Retrying... Error: ${lastError}`);
       // Brief back-off before retry
       await new Promise((r) => setTimeout(r, 150 * attempt));
     }
@@ -1093,11 +1275,16 @@ function reflect(toolSteps: AgentToolStep[]): {
   needsFollowUp: boolean;
   severity: ReflectionSeverity;
 } {
+  console.log(`\x1b[34m[Agent Reflection]\x1b[0m Analyzing operational health of ${toolSteps.length} step(s)...`);
   const failed = toolSteps.filter(s => s.status === "error" || s.status === "timeout");
   const succeeded = toolSteps.filter(s => s.status === "success");
   const total = toolSteps.filter(s => s.status !== "skipped").length;
 
-  if (!failed.length) return { note: "", needsFollowUp: false, severity: "ok" };
+  if (!failed.length) {
+    const res = { note: "", needsFollowUp: false, severity: "ok" as const };
+    console.log(`\x1b[34m[Agent Reflection]\x1b[0m \x1b[32m[OK]\x1b[0m All operational tool calls executed successfully.`);
+    return res;
+  }
 
   const allFailed = succeeded.length === 0 && failed.length > 0;
   const criticalTools = ["get_machine_status", "get_active_alerts", "get_all_live_tags", "get_alert_history"];
@@ -1105,27 +1292,33 @@ function reflect(toolSteps: AgentToolStep[]): {
   const failRate = failed.length / Math.max(1, total);
 
   if (allFailed) {
-    return {
+    const res = {
       note: `⚠ All ${failed.length} tool(s) failed — no live data available. Answer is based on prior context only.`,
       needsFollowUp: false,
-      severity: "failed"
+      severity: "failed" as const
     };
+    console.warn(`\x1b[31m[Agent Reflection]\x1b[0m \x1b[31m[FAILED]\x1b[0m All tool calls failed! Severity: failed. Note: ${res.note}`);
+    return res;
   }
 
   if (criticalFailed || failRate >= 0.5) {
     const names = failed.map(s => s.tool).join(", ");
-    return {
+    const res = {
       note: `⚠ Critical data unavailable (${names}). Answer may be incomplete — verify with a follow-up query.`,
       needsFollowUp: true,
-      severity: "degraded"
+      severity: "degraded" as const
     };
+    console.warn(`\x1b[33m[Agent Reflection]\x1b[0m \x1b[33m[DEGRADED]\x1b[0m Critical tool(s) failed: [${names}]. Severity: degraded. Note: ${res.note}`);
+    return res;
   }
 
-  return {
+  const res = {
     note: `${failed.length} of ${total} tool(s) failed and were skipped. Partial data used.`,
     needsFollowUp: false,
-    severity: "partial"
+    severity: "partial" as const
   };
+  console.log(`\x1b[33m[Agent Reflection]\x1b[0m \x1b[33m[PARTIAL]\x1b[0m Some non-critical tool calls failed. Severity: partial. Note: ${res.note}`);
+  return res;
 }
 
 // ─── Chart Helpers ────────────────────────────────────────────────────────────
@@ -1235,13 +1428,17 @@ function downsampleSeries(
 // Groups tags with the same time window into a single comparative chart.
 
 function generateChartsFromHistory(toolSteps: AgentToolStep[]): AgentChart[] {
+  console.log(`\x1b[36m[Agent Charts]\x1b[0m Starting chart generation process from operational history...`);
   const charts: AgentChart[] = [];
 
   const historySteps = toolSteps.filter(
     (s) => s.tool === "get_tag_history" && s.status === "success" && s.result
   );
 
-  if (historySteps.length === 0) return charts;
+  if (historySteps.length === 0) {
+    console.log(`\x1b[36m[Agent Charts]\x1b[0m No successful tag history steps to chart.`);
+    return charts;
+  }
 
   // Group steps by their resolved time window to combine tags into one chart
   const groups: Record<string, AgentToolStep[]> = {};
@@ -1295,6 +1492,7 @@ function generateChartsFromHistory(toolSteps: AgentToolStep[]): AgentChart[] {
     });
   }
 
+  console.log(`\x1b[36m[Agent Charts]\x1b[0m Generated ${charts.length} trend chart(s):`, charts.map(c => c.title));
   return charts;
 }
 
@@ -1309,9 +1507,12 @@ export async function runAgent(args: {
 }): Promise<AgentResult> {
   assertProviderConfigured();
   const start = Date.now();
-  const plan = await buildHeuristicPlan(args.userMessage, args.logger);
+  console.log(`\n\x1b[1;36m==================== START AGENT RUN ====================\x1b[0m`);
+  console.log(`\x1b[1;36m[Agent Run]\x1b[0m Session ID: ${args.sessionId} | Machine: ${args.machineId}`);
+  
+  const { plan, queryClass } = await buildAgentPlan(args.userMessage, args.logger);
 
-  const result = await runBedrockPipeline({ ...args, plan })
+  const result = await runBedrockPipeline({ ...args, plan, queryClass });
 
   const reflection = reflect(result.toolSteps);
 
@@ -1333,16 +1534,20 @@ export async function runAgent(args: {
     );
   }
 
+  const durationMs = Date.now() - start;
+  console.log(`\x1b[1;32m[Agent Run] Completed in ${durationMs}ms! Reply Length: ${result.reply.length} chars. Tools Used: ${result.toolsUsed.join(", ") || "None"}\x1b[0m`);
+  console.log(`\x1b[1;36m===================== END AGENT RUN =====================\x1b[0m\n`);
+
   return {
     ...result,
     charts: charts.length > 0 ? charts : undefined,
     trace: {
       plan,
-      queryClass: plan.intent.match(/^\[([A-Z]+)\]/)?.[1]?.toLowerCase() ?? "unknown",
+      queryClass,
       toolSteps: result.toolSteps,
       toolsUsed: result.toolsUsed,
       totalToolCalls: result.toolSteps.filter((s) => s.status !== "skipped").length,
-      durationMs: Date.now() - start,
+      durationMs,
       reflectionNote: reflection.note || undefined,
       reflectionSeverity: reflection.severity
     }
@@ -1360,6 +1565,7 @@ async function runBedrockPipeline(args: {
   sessionId: string;
   logger: FastifyBaseLogger;
   plan: AgentPlan;
+  queryClass: QueryClass;
 }): Promise<Omit<AgentResult, "trace">> {
   const toolsUsed: string[] = [];
   const toolSteps: AgentToolStep[] = [];
@@ -1367,6 +1573,8 @@ async function runBedrockPipeline(args: {
   const messages = toBedrockMessages(args.history, args.userMessage);
   const tools = bedrockToolsFromDeclarations(ALL_TOOL_DECLARATIONS);
   let totalCalls = 0;
+
+  console.log(`\x1b[35m[Agent Pipeline]\x1b[0m Starting Bedrock Reasoning Pipeline with provider configuration:`, config.aiProvider);
 
   for (let round = 0; round < 8; round++) {
     // Round 0 with requiresTools=true: force at least one tool call using toolChoice: any.
@@ -1376,9 +1584,12 @@ async function runBedrockPipeline(args: {
       ? { any: {} }
       : { auto: {} };
 
+    console.log(`\x1b[35m[Agent Pipeline] [Round ${round}]\x1b[0m Querying model: ${config.bedrockModelId}. ToolChoice:`, toolChoice);
+    const roundStart = Date.now();
+    
     const response = await withTimeout(
       bedrockConverse({
-        systemPrompt: buildSystemPrompt(),
+        systemPrompt: buildSystemPrompt(args.plan, args.queryClass, args.userMessage),
         messages,
         tools,
         toolChoice,
@@ -1390,6 +1601,7 @@ async function runBedrockPipeline(args: {
       `bedrock_round_${round}`
     );
 
+    const roundDuration = Date.now() - roundStart;
     const stopReason = response.stopReason;
     const message = response.output?.message;
     const content = message?.content ?? [];
@@ -1400,6 +1612,7 @@ async function runBedrockPipeline(args: {
       { round, stopReason, toolUses: toolUses.length, hasText: !!textReply, contentBlocks: content.length, sessionId: args.sessionId },
       "bedrock_round"
     );
+    console.log(`\x1b[35m[Agent Pipeline] [Round ${round}]\x1b[0m Model responded in ${roundDuration}ms. StopReason: "${stopReason}" | ContentBlocks: ${content.length} | ToolUses: ${toolUses.length} | TextReplyLength: ${textReply ? textReply.length : 0}`);
 
     // Guard: empty or error response
     // Happens when Bedrock throttles, hits max_tokens, or the model returns nothing.
@@ -1408,15 +1621,17 @@ async function runBedrockPipeline(args: {
         { round, stopReason, sessionId: args.sessionId, modelId: config.bedrockModelId },
         "bedrock_empty_content"
       );
+      console.warn(`\x1b[33m[Agent Pipeline] [Round ${round}]\x1b[0m Empty or invalid content returned from model.`);
 
       // Round 0, no tools executed yet: retry once as plain text (no toolConfig)
       // to guarantee at least a knowledge-based answer from the system prompt.
       if (round === 0 && totalCalls === 0) {
         args.logger.warn({ sessionId: args.sessionId }, "bedrock_round0_retrying_text_only");
+        console.warn(`\x1b[33m[Agent Pipeline] [Round ${round}]\x1b[0m Round 0, no tool calls yet. Retrying text-only fallback...`);
         try {
           const fallbackResp = await withTimeout(
             bedrockConverse({
-              systemPrompt: buildSystemPrompt(),
+              systemPrompt: buildSystemPrompt(args.plan, args.queryClass, args.userMessage),
               messages,
               // intentionally omit tools to force a text answer
               modelId: config.bedrockModelId,
@@ -1428,6 +1643,7 @@ async function runBedrockPipeline(args: {
           );
           const fallbackText = extractBedrockText(fallbackResp.output?.message?.content);
           if (fallbackText) {
+            console.log(`\x1b[32m[Agent Pipeline] [Round ${round}]\x1b[0m Successfully recovered via text-only fallback.`);
             return {
               reply: `\u26a0 Tools unavailable (stopReason: ${stopReason ?? "UNKNOWN"}). Answer based on system context:\n\n${fallbackText}`,
               toolsUsed,
@@ -1439,6 +1655,7 @@ async function runBedrockPipeline(args: {
           }
         } catch (retryErr) {
           args.logger.error({ err: String(retryErr), sessionId: args.sessionId }, "bedrock_text_fallback_failed");
+          console.error(`\x1b[31m[Agent Pipeline] [Round ${round}]\x1b[0m Text-only fallback retry failed: ${retryErr}`);
         }
       }
 
@@ -1462,6 +1679,7 @@ async function runBedrockPipeline(args: {
 
     // FINALIZE: model returned text with no tool calls
     if (!toolUses.length) {
+      console.log(`\x1b[32m[Agent Pipeline] [Round ${round}] [FINALIZE]\x1b[0m Reasoning pipeline complete. Final reply generated: "${textReply.slice(0, 100).replace(/\n/g, ' ')}${textReply.length > 100 ? '...' : ''}"`);
       return {
         reply: textReply,
         toolsUsed,
@@ -1475,6 +1693,7 @@ async function runBedrockPipeline(args: {
     // Guard: hard cap
     if (totalCalls + toolUses.length > MAX_TOOL_CALLS) {
       args.logger.warn({ totalCalls, requested: toolUses.length, sessionId: args.sessionId }, "agent_tool_cap_reached");
+      console.warn(`\x1b[31m[Agent Pipeline] [Round ${round}]\x1b[0m Tool call limit cap reached (${MAX_TOOL_CALLS}). Terminating reasoning early.`);
       return {
         reply: extractBedrockText(content) || "Analysis stopped: maximum tool call limit reached.",
         toolsUsed,
@@ -1484,6 +1703,7 @@ async function runBedrockPipeline(args: {
 
     if (message) messages.push(message);
 
+    console.log(`\x1b[32m[Agent Pipeline] [Round ${round}]\x1b[0m Executing ${toolUses.length} tool call(s) sequentially...`);
     const toolResultContent: ContentBlock[] = await Promise.all(
       toolUses.map(async (toolUse) => {
         const name = toolUse.name ?? "unknown_tool";
@@ -1500,7 +1720,9 @@ async function runBedrockPipeline(args: {
           logger: args.logger,
           cache,
           toolSteps,
-          toolsUsed
+          toolsUsed,
+          queryClass: args.queryClass,
+          userMessage: args.userMessage
         });
 
         const isError = "error" in r.functionResponse.response;
@@ -1518,6 +1740,7 @@ async function runBedrockPipeline(args: {
     messages.push({ role: "user", content: toolResultContent });
   }
 
+  console.error(`\x1b[31m[Agent Pipeline]\x1b[0m Maximum reasoning rounds reached (8). Returning early.`);
   return {
     reply: "Analysis could not be completed: maximum reasoning rounds reached.",
     toolsUsed,
