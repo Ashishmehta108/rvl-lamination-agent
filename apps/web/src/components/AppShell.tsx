@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Home, Chart, DocumentText, MessageText } from "iconsax-reactjs";
-
+import { useAppContext } from "@/context/AppContext";
 const NAV_LINKS = [
   { href: "/", label: "Dashboard", icon: (a: boolean) => <Home size={20} variant={a ? "Bulk" : "Linear"} /> },
   { href: "/production", label: "Production", icon: (a: boolean) => <Chart size={20} variant={a ? "Bulk" : "Linear"} /> },
@@ -13,10 +13,10 @@ const NAV_LINKS = [
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "";
-  const { 
-    machineId, setMachineId, 
-    isGeneratingReport, triggerReport, 
-    menuOpen, setMenuOpen 
+  const {
+    machineId, setMachineId,
+    isGeneratingReport, triggerReport,
+    menuOpen, setMenuOpen
   } = useAppContext();
 
   const isActive = (href: string) =>
