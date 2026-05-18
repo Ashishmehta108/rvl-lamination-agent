@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@rvl/shared": "0.0.0",
+    "hugeicons-react": "^0.4.0",
     "iconsax-react": "^0.0.8",
     "iconsax-reactjs": "^0.0.8",
     "jose": "^6.2.3",
@@ -25,6 +26,7 @@
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "sonner": "^2.0.7",
     "swr": "^2.4.1"
   },
   "devDependencies": {

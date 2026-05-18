@@ -28,7 +28,6 @@
 [data-theme="light"] {
   --bg:           #f9f8f6;
   --surface:      #ffffff;
-  --surface-rgb:  255, 255, 255;
   --surface-2:    #f1efeb;
   --surface-3:    #e8e6e1;
   --border:       #e5e2dd;
@@ -45,7 +44,6 @@
 [data-theme="dark"] {
   --bg:           #131210;
   --surface:      #1c1b18;
-  --surface-rgb:  28, 27, 24;
   --surface-2:    #262421;
   --surface-3:    #2f2d29;
   --border:       #2d2b27;
@@ -66,22 +64,19 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
-  font-size: 13px;
+  font-size: 13px; /* Slightly smaller for precision look */
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   letter-spacing: -0.01em;
-  overflow-x: hidden;
-  width: 100%;
 }
 
 /* ── Components ─────────────────────────────────────────────────────────── */
 .rvl-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 8px;
   box-shadow: var(--shadow);
   transition: border-color .15s ease;
-  overflow: hidden;
 }
 
 .rvl-btn-primary {
@@ -119,107 +114,12 @@ body {
   border-color: var(--accent);
 }
 
-.rvl-glass {
-  background: rgba(var(--surface-rgb), 0.75) !important;
-  backdrop-filter: blur(12px) saturate(180%);
-  -webkit-backdrop-filter: blur(12px) saturate(180%);
-}
-
 /* ── Transitions ────────────────────────────────────────────────────────── */
 * {
   transition-property: background-color, border-color, color;
   transition-duration: .2s;
   transition-timing-function: ease;
 }
-<<<<<<< HEAD
-
-/* ── Chat-Specific Styles ──────────────────────────────────────────────── */
-
-/* Scrollbar */
-.rvl-chat-scroll::-webkit-scrollbar { width: 5px; }
-.rvl-chat-scroll::-webkit-scrollbar-track { background: transparent; }
-.rvl-chat-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
-.rvl-chat-scroll::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
-
-/* Sidebar scrollbar */
-.rvl-sidebar::-webkit-scrollbar { width: 4px; }
-.rvl-sidebar::-webkit-scrollbar-track { background: transparent; }
-.rvl-sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
-
-/* Empty state hero icon pulse */
-@keyframes rvl-pulse-glow {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 20%, transparent); }
-  50% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--accent) 0%, transparent); }
-}
-.rvl-hero-icon {
-  animation: rvl-pulse-glow 3s ease-in-out infinite;
-}
-
-/* Suggestion chips */
-.rvl-chip {
-  position: relative;
-  overflow: hidden;
-}
-.rvl-chip::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent);
-  opacity: 0;
-  transition: opacity .25s ease;
-}
-.rvl-chip:hover::before { opacity: 1; }
-
-/* Message hover actions */
-.rvl-msg .rvl-msg-actions { opacity: 0; transition: opacity .15s ease; }
-.rvl-msg:hover .rvl-msg-actions { opacity: 1; }
-
-/* User bubble gradient accent line */
-.rvl-user-bubble {
-  position: relative;
-}
-.rvl-user-bubble::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  width: 2px;
-  height: 60%;
-  border-radius: 2px;
-  background: linear-gradient(to top, var(--accent), transparent);
-  opacity: .35;
-}
-
-/* Input focus ring */
-.rvl-input-focused {
-  border-color: var(--accent) !important;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent), 0 2px 8px rgba(0,0,0,.06) !important;
-}
-
-/* Sidebar conversation item */
-.rvl-conv-item { transition: all .15s ease; }
-.rvl-conv-item:hover .rvl-del { opacity: 1 !important; }
-.rvl-conv-item:hover { background: var(--surface-2) !important; }
-.rvl-conv-item.active { background: var(--surface-3) !important; border-left: 2px solid var(--accent) !important; }
-
-/* Assistant avatar shimmer on new message */
-@keyframes rvl-avatar-pop {
-  0% { transform: scale(.85); opacity: 0; }
-  60% { transform: scale(1.08); }
-  100% { transform: scale(1); opacity: 1; }
-}
-.rvl-assistant-avatar { animation: rvl-avatar-pop .3s cubic-bezier(.22,1,.36,1) both; }
-
-/* Citation tag hover */
-.rvl-citation {
-  transition: all .15s ease;
-  cursor: default;
-}
-.rvl-citation:hover {
-  background: var(--accent-faint) !important;
-  border-color: var(--accent) !important;
-=======
 /* ── Live dot ───────────────────────────────────────────────────────────── */
 .rvl-live-dot {
   width: 6px;
@@ -461,14 +361,14 @@ body {
 .rvl-grid-kpi {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
+  gap: 14px;
   margin-bottom: 24px;
 }
 
 .rvl-grid-main {
   display: grid;
-  grid-template-columns: 1fr 340px;
-  gap: 24px;
+  grid-template-columns: 1fr 320px;
+  gap: 20px;
 }
 
 .rvl-grid-3col {
@@ -484,31 +384,33 @@ body {
 }
 
 @media (max-width: 1024px) {
-  .rvl-grid-main { grid-template-columns: 1fr; }
-  .rvl-grid-3col { grid-template-columns: 1fr 1fr; }
-}
-
-@media (max-width: 768px) {
-  .rvl-grid-kpi { grid-template-columns: 1fr 1fr; gap: 12px; }
-  .rvl-grid-3col { grid-template-columns: 1fr; }
-  .rvl-grid-2col { grid-template-columns: 1fr; }
-}
-
-@media (max-width: 640px) {
-  main { padding: 16px 12px 40px !important; }
-  .rvl-hide-mobile { display: none !important; }
-  .rvl-show-mobile-flex { display: flex !important; }
-  
-  /* Table container utility */
-  .rvl-table-responsive {
-    width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
+  .rvl-grid-main {
+    grid-template-columns: 1fr;
+  }
+  .rvl-grid-3col {
+    grid-template-columns: 1fr 1fr;
   }
 }
 
-@media (max-width: 480px) {
-  .rvl-grid-kpi { grid-template-columns: 1fr; }
+@media (max-width: 640px) {
+  .rvl-grid-kpi   { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .rvl-grid-main  { grid-template-columns: 1fr; gap: 16px; }
+  .rvl-grid-3col  { grid-template-columns: 1fr; }
+  .rvl-grid-2col  { grid-template-columns: 1fr; }
+
+  main { padding: 16px 12px 40px !important; }
+
+  .rvl-hide-mobile { display: none !important; }
+
+  /* Header */
+  .rvl-header-right .rvl-header-asset { display: none; }
+
+  /* Sensor grid: 2-col card layout on mobile */
+  .rvl-sensor-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
 }
 
 /* ── Sensor card layout ───────────────────────────────────────────────────── */
@@ -540,5 +442,4 @@ body {
     gap: 4px;
   }
   .rvl-sensor-cat-header { display: none; }
->>>>>>> 02e08f3b3b29dbb0b5a0b41abe1bbec91470b0ad
 }

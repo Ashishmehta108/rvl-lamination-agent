@@ -290,9 +290,7 @@ export default function MessageItem({ msg }: MessageItemProps) {
             {msg.content}
           </div>
         ) : (
-          <div className="rvl-msg-bubble" style={{ maxWidth: "85%" }}>
-            <AssistantMarkdown content={msg.content} />
-          </div>
+          <AssistantMarkdown content={msg.content} />
         )}
 
         {msg.charts && msg.charts.length > 0 && (
@@ -331,9 +329,6 @@ export default function MessageItem({ msg }: MessageItemProps) {
             ))}
           </div>
         )}
-<<<<<<< HEAD
-        <div className="rvl-msg-actions" style={{ marginTop: 6 }}><CopyBtn text={msg.content} /></div>
-=======
 
         <div style={{ marginTop: 8 }}>
           <CopyBtn text={msg.content} />
