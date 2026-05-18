@@ -84,7 +84,7 @@ const PRESETS = [
 
 const COLORS = [C.accent, C.blue, C.green, C.amber, C.purple, C.red];
 
-interface Sample { x: string; [key: string]: any }
+interface Sample { x: string;[key: string]: any }
 
 export default function HistoryPage() {
   const [machineId] = useState("lamination-01");
@@ -125,7 +125,7 @@ export default function HistoryPage() {
       const meta: { unit: string; slug: string }[] = [];
 
       results.forEach((res, i) => {
-        const slug = selectedTags[i];
+        const slug = selectedTags[i]!;
         const tagInfo = allTags.find(t => t.slug === slug);
         meta.push({ slug, unit: tagInfo?.unit ?? "" });
         const samples: any[] = res?.samples ?? [];

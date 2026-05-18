@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -20,10 +21,8 @@
   --radius-xl: 16px;
 }
 
-/* ── Inter font ─────────────────────────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
-
 /* ── Claude-Inspired Theme ──────────────────────────────────────────────── */
+
 :root,
 [data-theme="light"] {
   --bg:           #f9f8f6;
