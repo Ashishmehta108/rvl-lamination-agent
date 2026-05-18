@@ -100,11 +100,8 @@ export default function ChatPage() {
           transform: translateY(-1px);
         }
 
-        /* ── Global text alignment fix ── */
-        * {
-          text-align: left;
-          -webkit-text-size-adjust: 100%;
-        }
+        /* ── Prevent unwanted text-size inflation on mobile ── */
+        html { -webkit-text-size-adjust: 100%; }
       `}</style>
 
       {/*
@@ -220,10 +217,20 @@ export default function ChatPage() {
             }}>
               <button
                 onClick={() => setSidebarOpen(true)}
+                title="Open sidebar"
                 style={{
-                  background: "none", border: "1px solid var(--border)",
-                  borderRadius: 8, padding: 7, cursor: "pointer",
+                  background: "none", border: "none",
+                  borderRadius: 8, padding: 8, cursor: "pointer",
                   color: "var(--text-faint)", display: "flex", alignItems: "center",
+                  transition: "background .15s, color .15s",
+                }}
+                onMouseEnter={e => {
+                  (e.currentTarget as HTMLButtonElement).style.background = "var(--surface-2)";
+                  (e.currentTarget as HTMLButtonElement).style.color = "var(--text)";
+                }}
+                onMouseLeave={e => {
+                  (e.currentTarget as HTMLButtonElement).style.background = "none";
+                  (e.currentTarget as HTMLButtonElement).style.color = "var(--text-faint)";
                 }}
               >
                 <SidebarLeft size={16} color="currentColor" />
@@ -292,11 +299,11 @@ export default function ChatPage() {
           */}
           <div style={{
             flexShrink: 0,
-            padding: "10px 16px 14px",
-            background: "var(--bg)",
-            borderTop: "1px solid var(--border)",
-            /* Subtle fade above the bar */
-            boxShadow: "0 -12px 24px -4px var(--bg)",
+
+
+
+            /* Soft fade so messages don't hard-clip at the bar */
+
           }}>
             <div style={{ maxWidth: 720, margin: "0 auto" }}>
               <ChatInput
@@ -482,9 +489,8 @@ function ThinkingIndicator() {
         style={{
           fontSize: 12.5, fontWeight: 500,
           opacity: visible ? 1 : 0,
-          transition: "opacity .2s ease",
+          transition: "opacity .22s ease",
           letterSpacing: "-0.01em",
-          textAlign: "left",
         }}
       >
         {THINKING_STEPS[step]}
