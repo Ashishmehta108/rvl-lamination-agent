@@ -73,7 +73,6 @@ export default function ChatPage() {
           0%   { background-position: 100% 50%; }
           100% { background-position: -100% 50%; }
         }
-        /* Vercel-style thinking dot */
         @keyframes rvl-dot-pulse {
           0%, 100% { transform: scale(0.55); opacity: 0.25; }
           50%       { transform: scale(1);    opacity: 1; }
@@ -100,12 +99,18 @@ export default function ChatPage() {
           color: var(--text) !important;
           transform: translateY(-1px);
         }
+
+        /* ── Global text alignment fix ── */
+        * {
+          text-align: left;
+          -webkit-text-size-adjust: 100%;
+        }
       `}</style>
 
       {/*
-        Root shell: fills parent (AppShell owns 100dvh), no overflow escaping.
+        Root shell: fills parent (AppShell owns 100dvh).
         Desktop: sidebar + main side-by-side.
-        Mobile: just main (sidebar overlays, bottom nav below).
+        Mobile: sidebar overlay + main column (top-bar → scroll → input footer).
       */}
       <div
         style={{
@@ -121,7 +126,6 @@ export default function ChatPage() {
       >
         {/* ── SIDEBAR ── */}
         {isMobile ? (
-          /* Mobile: full overlay */
           <>
             <div
               style={{
@@ -157,7 +161,7 @@ export default function ChatPage() {
             )}
           </>
         ) : (
-          /* Desktop: docked — collapsed shows a thin icon-strip (Notion-style) */
+          /* Desktop: docked */
           <div
             style={{
               flexShrink: 0,
@@ -186,7 +190,6 @@ export default function ChatPage() {
                 layout="docked"
               />
             ) : (
-              /* Collapsed dock strip */
               <CollapsedDock onOpen={() => setSidebarOpen(true)} onNewChat={startNewChat} />
             )}
           </div>
@@ -225,19 +228,26 @@ export default function ChatPage() {
               >
                 <SidebarLeft size={16} color="currentColor" />
               </button>
-              <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+              <span style={{
+                flex: 1, fontSize: 13, fontWeight: 600,
+                color: "var(--text)",
+                textAlign: "left",         /* explicit: no centring on mobile */
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}>
                 {active?.title ?? "Assistant"}
               </span>
             </div>
           )}
 
-          {/* Scrollable messages */}
+          {/* Scrollable messages — flex: 1 so it fills remaining space */}
           <div
             ref={scrollAreaRef}
             className="rvl-noscroll"
             style={{
               flex: 1,
-              minHeight: 0,       /* ← fixes flexbox overflow */
+              minHeight: 0,
               overflowY: "auto",
               overflowX: "hidden",
               overscrollBehavior: "contain",
@@ -248,7 +258,12 @@ export default function ChatPage() {
             ) : (
               <div style={{
                 maxWidth: 720, margin: "0 auto",
-                padding: "28px 20px 160px",
+                /*
+                  Desktop: 28px top, 32px bottom (input bar is a footer, not absolute).
+                  Mobile:  same — the input footer sits outside this scroll area so
+                           we only need a small bottom gap.
+                */
+                padding: isMobile ? "20px 16px 24px" : "28px 20px 32px",
                 display: "flex", flexDirection: "column", gap: 4,
               }}>
                 {msgs.map((msg, i) => (
@@ -269,16 +284,21 @@ export default function ChatPage() {
             )}
           </div>
 
-          {/* Sticky input */}
+          {/*
+            ── INPUT FOOTER ──
+            Rendered as a normal flex child (flexShrink: 0) so it always sits at
+            the bottom of the column without needing position:absolute or a magic
+            bottom offset. Works on both desktop and mobile.
+          */}
           <div style={{
-            position: "absolute", bottom: isMobile ? 64 : 0,
-            left: 0, right: 0,
-            padding: "12px 16px 0",
-            background: "linear-gradient(to top, var(--bg) 55%, transparent)",
-            zIndex: 20,
-            pointerEvents: "none",
+            flexShrink: 0,
+            padding: "10px 16px 14px",
+            background: "var(--bg)",
+            borderTop: "1px solid var(--border)",
+            /* Subtle fade above the bar */
+            boxShadow: "0 -12px 24px -4px var(--bg)",
           }}>
-            <div style={{ maxWidth: 720, margin: "0 auto", pointerEvents: "auto" }}>
+            <div style={{ maxWidth: 720, margin: "0 auto" }}>
               <ChatInput
                 input={input}
                 onInputChange={setInput}
@@ -290,7 +310,6 @@ export default function ChatPage() {
           </div>
         </main>
       </div>
-
     </>
   );
 }
@@ -340,7 +359,6 @@ function CollapsedDock({ onOpen, onNewChat }: { onOpen: () => void; onNewChat: (
           (e.currentTarget as HTMLButtonElement).style.color = "var(--text-faint)";
         }}
       >
-        {/* Pencil icon substitute */}
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-6" />
           <path d="M18.375 2.625a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4Z" />
@@ -370,7 +388,8 @@ function EmptyState({ onSend }: { onSend: (t: string) => void }) {
     <div style={{
       display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: "center", minHeight: "75dvh",
-      gap: 28, padding: "0 24px 80px", textAlign: "center",
+      gap: 28, padding: "0 24px 32px",
+      /* text-align: center only for the hero block, chips stay centered via flex */
       animation: "rvl-fadein .32s cubic-bezier(.22,1,.36,1) both",
     }}>
       <div style={{ position: "relative" }}>
@@ -389,15 +408,25 @@ function EmptyState({ onSend }: { onSend: (t: string) => void }) {
           pointerEvents: "none",
         }} />
       </div>
-      <div style={{ maxWidth: 380 }}>
-        <h2 style={{ fontSize: 21, fontWeight: 700, letterSpacing: "-0.025em", margin: "0 0 8px", color: "var(--text)" }}>
+
+      {/* Title/subtitle — centred text is intentional here (hero block) */}
+      <div style={{ maxWidth: 380, textAlign: "center" }}>
+        <h2 style={{
+          fontSize: 21, fontWeight: 700, letterSpacing: "-0.025em",
+          margin: "0 0 8px", color: "var(--text)",
+          textAlign: "center",
+        }}>
           RVL Lamination Assistant
         </h2>
-        <p style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.7, margin: 0 }}>
+        <p style={{
+          fontSize: 13, color: "var(--text-muted)", lineHeight: 1.7, margin: 0,
+          textAlign: "center",
+        }}>
           Operational intelligence at your fingertips. Ask about machine performance,
           active alerts, or production trends.
         </p>
       </div>
+
       <div style={{ display: "flex", flexWrap: "wrap", gap: 7, justifyContent: "center", maxWidth: 500 }}>
         {SUGGESTED.map((s, idx) => (
           <button
@@ -407,6 +436,7 @@ function EmptyState({ onSend }: { onSend: (t: string) => void }) {
             style={{
               padding: "7px 15px", fontSize: 12, fontWeight: 500,
               borderRadius: 999, cursor: "pointer", fontFamily: "inherit",
+              textAlign: "center",
               animation: `rvl-chip-in .32s cubic-bezier(.22,1,.36,1) ${idx * 0.06}s both`,
             }}
           >
@@ -432,7 +462,6 @@ function ThinkingIndicator() {
 
   useEffect(() => {
     const t = setInterval(() => {
-      // Fade out → swap text → fade in
       setVisible(false);
       setTimeout(() => {
         setStep(s => (s < THINKING_STEPS.length - 1 ? s + 1 : s));
@@ -455,6 +484,7 @@ function ThinkingIndicator() {
           opacity: visible ? 1 : 0,
           transition: "opacity .2s ease",
           letterSpacing: "-0.01em",
+          textAlign: "left",
         }}
       >
         {THINKING_STEPS[step]}
