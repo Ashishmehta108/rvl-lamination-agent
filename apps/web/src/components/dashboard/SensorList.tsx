@@ -165,8 +165,7 @@ export default function SensorList({ items }: SensorListProps) {
   const dedupMap = new Map<string, TagLatest>();
   for (const item of items) {
     const key = item.slug || item.tagId;
-    const ex  = dedupMap.get(key);
-    if (!ex || item.valueNumber != null) dedupMap.set(key, item);
+    if (!dedupMap.has(key)) dedupMap.set(key, item);
   }
   const unique = Array.from(dedupMap.values());
 

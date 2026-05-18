@@ -2,46 +2,51 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Flash, SidebarLeft, Cpu } from "iconsax-reactjs";
-import AppHeader from "@/components/AppHeader";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import MessageItem from "@/components/chat/MessageItem";
 import ChatInput from "@/components/chat/ChatInput";
 import { useChat } from "@/hooks/useChat";
 
+
 const SUGGESTED = [
   "What alerts fired today on this machine?",
-  "List the latest tag values",
-  "What does low nip pressure usually mean?"
+  "Show me the trend for MASTER_SPEED_PCT last 2 days",
+  "What is the current line efficiency?",
+  "List all live tag values",
 ];
-
-const CHAT_MODEL_LABEL = process.env.NEXT_PUBLIC_OLLAMA_MODEL_LABEL ?? "llama3.2:1b";
 
 export default function ChatPage() {
   const {
     conversations, active, activeId, setActiveId, loading,
-    startNewChat, deleteConversation, updateMachineId, sendMessage
+    startNewChat, deleteConversation, updateMachineId, sendMessage,
   } = useChat();
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
   const [search, setSearch] = useState("");
   const [input, setInput] = useState("");
-  const bottomRef = useRef<HTMLDivElement>(null);
 
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+
+  // Responsive detection
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 768px)");
     const apply = () => {
       const m = mq.matches;
       setIsMobile(m);
-      if (m) setSidebarOpen(false);
+      setSidebarOpen(!m);
     };
     apply();
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, []);
 
+  // Auto-scroll
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = scrollAreaRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [active?.messages, loading]);
 
   const handleSend = (text?: any) => {
@@ -57,341 +62,403 @@ export default function ChatPage() {
 
   return (
     <>
-      <style>{`
-        @keyframes rvl-bounce { 0%,80%,100%{transform:translateY(0);opacity:.35}40%{transform:translateY(-5px);opacity:1} }
-        @keyframes rvl-fadein { from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)} }
-        @keyframes rvl-blink  { 0%,100%{opacity:1}50%{opacity:0} }
-<<<<<<< HEAD
-        .rvl-msg { animation: rvl-fadein .28s cubic-bezier(.22,1,.36,1) both }
-        .rvl-sidebar { transition: width .22s cubic-bezier(.4,0,.2,1), opacity .2s }
-=======
-        @keyframes rvl-slide-in { from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:translateX(0)} }
-
-        .rvl-msg { animation: rvl-fadein .3s cubic-bezier(.22,1,.36,1) both }
-        .rvl-conv-item { transition: background .2s, border-color .2s; }
-        .rvl-conv-item:hover .rvl-del { opacity:1!important; transform: scale(1); }
-        .rvl-conv-item:hover { background:var(--surface-2)!important }
-        .rvl-conv-item.active { background:var(--surface-3)!important; border-left:2px solid var(--accent)!important }
-        .rvl-chip { transition: all .2s cubic-bezier(.4,0,.2,1); }
-        .rvl-chip:hover { background:var(--surface-3)!important; border-color:var(--accent)!important; transform: translateY(-1px); color: var(--text)!important; }
-        .rvl-input-focused { border-color: var(--accent)!important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent)!important }
-        .rvl-sidebar { transition: width .28s cubic-bezier(.4,0,.2,1), opacity .2s, transform .28s cubic-bezier(.4,0,.2,1); }
-        /* Mobile Adjustments */
-        @media (max-width: 768px) {
-          .rvl-msg-bubble { max-width: 90%!important; }
-          .rvl-chat-container { padding: 0 12px!important; }
-          .rvl-header-machine-input { width: 90px!important; }
-          .rvl-header-machine-label { display: none; }
-          .rvl-empty-state { gap: 16px!important; padding: 0 16px!important; }
-          .rvl-empty-icon { width: 52px!important; height: 52px!important; }
-          .rvl-empty-icon svg { width: 24px!important; height: 24px!important; }
-          .rvl-empty-title { fontSize: 19px!important; }
-          .rvl-input-area { padding: 12px 12px 16px!important; }
+      {/* ── Styles ── */}
+      <style jsx global>{`
+        @keyframes rvl-bounce     { 0%,80%,100%{transform:translateY(0);opacity:.3}40%{transform:translateY(-4px);opacity:1} }
+        @keyframes rvl-fadein     { from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)} }
+        @keyframes rvl-chip-in    { from{opacity:0;transform:translateY(5px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)} }
+        @keyframes rvl-pulse-ring { 0%{box-shadow:0 0 0 0 rgba(158,90,50,.35)}70%{box-shadow:0 0 0 10px rgba(158,90,50,0)}100%{box-shadow:0 0 0 0 rgba(158,90,50,0)} }
+        @keyframes rvl-shimmer-bg { from{background-position:200% 0}to{background-position:-200% 0} }
+        @keyframes rvl-text-shimmer {
+          0%   { background-position: 100% 50%; }
+          100% { background-position: -100% 50%; }
         }
->>>>>>> 02e08f3b3b29dbb0b5a0b41abe1bbec91470b0ad
+        /* Vercel-style thinking dot */
+        @keyframes rvl-dot-pulse {
+          0%, 100% { transform: scale(0.55); opacity: 0.25; }
+          50%       { transform: scale(1);    opacity: 1; }
+        }
+        .rvl-shimmer-text {
+          background: linear-gradient(90deg,var(--text-faint) 0%,var(--text) 35%,var(--text-faint) 65%,var(--text-faint) 100%);
+          background-size: 200% 100%;
+          -webkit-background-clip: text;
+          background-clip: text;
+          -webkit-text-fill-color: transparent;
+          animation: rvl-text-shimmer 1.5s linear infinite;
+        }
+        .rvl-noscroll::-webkit-scrollbar { display:none; }
+        .rvl-noscroll { -ms-overflow-style:none; scrollbar-width:none; }
+        .rvl-msg-chip {
+          border: 1px solid var(--border);
+          background: var(--surface);
+          color: var(--text-muted);
+          transition: background .14s, border-color .14s, color .14s, transform .12s;
+        }
+        .rvl-msg-chip:hover {
+          background: var(--surface-2) !important;
+          border-color: var(--accent) !important;
+          color: var(--text) !important;
+          transform: translateY(-1px);
+        }
       `}</style>
 
-      <div className="rvl-chat-layout" style={{ 
-        display: "flex", 
-        height: "100dvh", 
-        maxHeight: "100dvh",
-        background: "var(--bg)", 
-        overflow: "hidden", 
-        paddingBottom: "env(safe-area-inset-bottom, 0)",
-        position: "relative"
-      }}>
-        {isMobile && sidebarOpen ? (
-          <button
-            type="button"
-            aria-label="Close conversation list"
-            onClick={() => setSidebarOpen(false)}
-            style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 45,
-              border: "none",
-              margin: 0,
-              padding: 0,
-              background: "rgba(15,14,12,0.42)",
-              cursor: "pointer"
-            }}
-          />
-        ) : null}
-        <ChatSidebar
-          open={sidebarOpen}
-          onClose={() => setSidebarOpen(false)}
-          onNewChat={() => {
-            startNewChat();
-            if (isMobile) setSidebarOpen(false);
-          }}
-          search={search}
-          onSearchChange={setSearch}
-          conversations={conversations}
-          activeId={activeId}
-          onSelect={(id) => {
-            setActiveId(id);
-            if (isMobile) setSidebarOpen(false);
-          }}
-          onDelete={deleteConversation}
-          layout={isMobile ? "overlay" : "docked"}
-        />
-
-<<<<<<< HEAD
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
-          {!sidebarOpen && (
-            <button onClick={() => setSidebarOpen(true)} title="Open sidebar" style={{
-              position: "absolute", top: 12, left: 12, zIndex: 50,
-              background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8, padding: 7,
-              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-              color: "var(--text-muted)", boxShadow: "var(--shadow)", transition: "all .15s ease"
-            }}>
-              <SidebarLeft size={16} color="currentColor" />
-            </button>
-          )}
-=======
-        <div style={{ 
-          flex: 1, 
-          display: "flex", 
-          flexDirection: "column", 
-          minWidth: 0,
-          height: "100%",
+      {/*
+        Root shell: fills parent (AppShell owns 100dvh), no overflow escaping.
+        Desktop: sidebar + main side-by-side.
+        Mobile: just main (sidebar overlays, bottom nav below).
+      */}
+      <div
+        style={{
+          display: "flex",
+          flex: 1,
+          minHeight: 0,
+          width: "100%",
+          overflow: "hidden",
+          background: "var(--bg)",
+          color: "var(--text)",
           position: "relative",
-          overflow: "hidden" 
-        }}>
->>>>>>> 02e08f3b3b29dbb0b5a0b41abe1bbec91470b0ad
-          <AppHeader
-            backHref="/"
-            backLabel="Dashboard"
-            title={active?.title ?? "RAG Assistant"}
-            subtitle={
-              active
-                ? `${active.machineId} · ${CHAT_MODEL_LABEL} · RAG`
-                : `RVL Lamination · ${CHAT_MODEL_LABEL} · RAG`
-            }
-            icon={<Flash size={14} color="var(--accent)" variant="Bulk" />}
-            rightSlot={
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-<<<<<<< HEAD
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Machine</span>
-                <input 
-                  value={active?.machineId ?? "machine_1"} 
-                  onChange={e => updateMachineId(e.target.value)} 
-                  style={{ width: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, padding: "4px 9px", fontSize: 12, color: "var(--text)", outline: "none", fontFamily: "monospace" }} 
-=======
-                {!sidebarOpen && (
-                  <button onClick={() => setSidebarOpen(true)} title="Open sidebar" style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 7, padding: 6, cursor: "pointer", display: "flex", color: "var(--text-muted)" }}>
-                    <SidebarLeft size={14} color="currentColor" />
-                  </button>
-                )}
-                <span className="rvl-header-machine-label" style={{ fontSize: 11, color: "var(--text-muted)" }}>Machine</span>
-                <input
-                  className="rvl-header-machine-input"
-                  value={active?.machineId ?? "machine_1"}
-                  onChange={e => updateMachineId(e.target.value)}
-                  style={{ width: 120, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, padding: "4px 9px", fontSize: 12, color: "var(--text)", outline: "none", fontFamily: "monospace", transition: "width .2s" }}
->>>>>>> 02e08f3b3b29dbb0b5a0b41abe1bbec91470b0ad
-                />
-                <button
-                  type="button"
-                  title="Ask about open and recent alerts"
-                  onClick={() => handleSend("Show open alerts and any alerts closed in the last 24 hours for this machine.")}
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    background: "var(--surface-2)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 6,
-                    padding: "4px 10px",
-                    color: "var(--accent)",
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                  }}
-                >
-                  Alerts
-                </button>
-              </div>
-            }
-          />
-
-          <div className="rvl-chat-scroll" style={{ flex: 1, overflowY: "auto", padding: isEmpty ? 0 : "28px 0 12px" }}>
-            {isEmpty ? (
-<<<<<<< HEAD
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 24, padding: "0 24px", textAlign: "center" }}>
-                <div className="rvl-hero-icon" style={{ width: 64, height: 64, borderRadius: 18, background: "linear-gradient(135deg, var(--accent-faint), color-mix(in srgb, var(--accent) 15%, var(--surface)))", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Flash size={28} color="var(--accent)" variant="Bulk" />
-                </div>
-                <div>
-                  <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)", marginBottom: 8, letterSpacing: "-0.02em" }}>RVL Lamination Assistant</div>
-                  <div style={{ fontSize: 14, color: "var(--text-muted)", maxWidth: 400, lineHeight: 1.65, margin: "0 auto" }}>
-                    Ask anything about your machine’s tags, alerts, or operational data.
-                  </div>
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", maxWidth: 580, marginTop: 4 }}>
-                  {SUGGESTED.map(s => (
-                    <button key={s} className="rvl-chip" onClick={() => handleSend(s)} style={{ fontSize: 12.5, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 24, padding: "8px 18px", color: "var(--text-muted)", cursor: "pointer", transition: "all .2s ease", fontFamily: "inherit", fontWeight: 500 }}>
-                      {s}
-=======
-              <div className="rvl-empty-state" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 40, padding: "0 24px", textAlign: "center", animation: "rvl-fadein .6s ease-out" }}>
-                <div style={{ position: "relative", animation: "rvl-fadein-up .6s ease both" }}>
-                  <div className="rvl-empty-icon" style={{ 
-                    width: 64, height: 64, borderRadius: 20, 
-                    background: "var(--accent-faint)", border: "1px solid color-mix(in srgb, var(--accent) 30%, transparent)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    boxShadow: "0 10px 30px -10px color-mix(in srgb, var(--accent) 30%, transparent)"
-                  }}>
-                    <Cpu size={32} color="var(--accent)" variant="Bulk" />
-                  </div>
-                  <div style={{ position: "absolute", bottom: -4, right: -4, width: 22, height: 22, borderRadius: "50%", background: "var(--bg)", border: "2px solid var(--bg)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}>
-                    <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#22c55e", animation: "rvl-blink 2s infinite" }} />
-                  </div>
-                </div>
-                
-                <div style={{ maxWidth: 500, animation: "rvl-fadein-up .6s ease both", animationDelay: "0.1s" }}>
-                  <h1 style={{ fontSize: 28, fontWeight: 800, color: "var(--text)", marginBottom: 12, letterSpacing: "-0.02em" }}>RVL Lamination AI</h1>
-                  <p style={{ fontSize: 16, color: "var(--text-muted)", lineHeight: 1.6, margin: 0 }}>
-                    Intelligent assistance for machine operations, data analysis, and process optimization.
-                  </p>
-                </div>
-
-                <div style={{ 
-                  display: "grid", 
-                  gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", 
-                  gap: 16, 
-                  width: "100%", 
-                  maxWidth: 800,
-                  animation: "rvl-fadein-up .6s ease both",
-                  animationDelay: "0.2s"
-                }}>
-                  {SUGGESTED.map((s, idx) => (
-                    <button 
-                      key={s} 
-                      onClick={() => handleSend(s)} 
-                      style={{ 
-                        textAlign: "left",
-                        padding: "20px 24px",
-                        background: "var(--surface-2)",
-                        border: "1px solid var(--border)",
-                        borderRadius: 16,
-                        color: "var(--text)",
-                        cursor: "pointer",
-                        transition: "all .2s cubic-bezier(.4,0,.2,1)",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 8,
-                        boxShadow: "0 2px 8px rgba(0,0,0,0.02)",
-                        fontFamily: "inherit"
-                      }}
-                      onMouseEnter={(e) => {
-                        (e.currentTarget as HTMLElement).style.borderColor = "var(--accent)";
-                        (e.currentTarget as HTMLElement).style.background = "var(--bg)";
-                        (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)";
-                        (e.currentTarget as HTMLElement).style.boxShadow = "0 10px 20px -10px rgba(0,0,0,0.05)";
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLElement).style.borderColor = "var(--border)";
-                        (e.currentTarget as HTMLElement).style.background = "var(--surface-2)";
-                        (e.currentTarget as HTMLElement).style.transform = "translateY(0)";
-                        (e.currentTarget as HTMLElement).style.boxShadow = "0 2px 8px rgba(0,0,0,0.02)";
-                      }}
-                    >
-                      <div style={{ fontSize: 14, fontWeight: 600 }}>{s}</div>
-                      <div style={{ fontSize: 12, color: "var(--text-faint)", fontWeight: 400 }}>Ask to get real-time insights</div>
->>>>>>> 02e08f3b3b29dbb0b5a0b41abe1bbec91470b0ad
-                    </button>
-                  ))}
-                </div>
-              </div>
+        }}
+      >
+        {/* ── SIDEBAR ── */}
+        {isMobile ? (
+          /* Mobile: full overlay */
+          <>
+            <div
+              style={{
+                position: "fixed", inset: "0 auto 0 0", zIndex: 50,
+                width: "min(288px, 88vw)",
+                transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
+                transition: "transform .24s cubic-bezier(.4,0,.2,1)",
+                boxShadow: sidebarOpen ? "12px 0 40px rgba(0,0,0,0.18)" : "none",
+              }}
+            >
+              <ChatSidebar
+                open={sidebarOpen}
+                onClose={() => setSidebarOpen(false)}
+                onNewChat={() => { startNewChat(); setSidebarOpen(false); }}
+                search={search}
+                onSearchChange={setSearch}
+                conversations={conversations}
+                activeId={activeId}
+                onSelect={(id) => { setActiveId(id); setSidebarOpen(false); }}
+                onDelete={deleteConversation}
+                layout="overlay"
+              />
+            </div>
+            {sidebarOpen && (
+              <div
+                onClick={() => setSidebarOpen(false)}
+                style={{
+                  position: "fixed", inset: 0, zIndex: 49,
+                  background: "rgba(0,0,0,0.4)",
+                  backdropFilter: "blur(2px)",
+                }}
+              />
+            )}
+          </>
+        ) : (
+          /* Desktop: docked — collapsed shows a thin icon-strip (Notion-style) */
+          <div
+            style={{
+              flexShrink: 0,
+              width: sidebarOpen ? 260 : 44,
+              transition: "width .22s cubic-bezier(.4,0,.2,1)",
+              overflow: "hidden",
+              borderRight: "1px solid var(--border)",
+              background: "var(--surface)",
+              display: "flex",
+              flexDirection: "column",
+              position: "relative",
+              zIndex: 10,
+            }}
+          >
+            {sidebarOpen ? (
+              <ChatSidebar
+                open={sidebarOpen}
+                onClose={() => setSidebarOpen(false)}
+                onNewChat={startNewChat}
+                search={search}
+                onSearchChange={setSearch}
+                conversations={conversations}
+                activeId={activeId}
+                onSelect={setActiveId}
+                onDelete={deleteConversation}
+                layout="docked"
+              />
             ) : (
-<<<<<<< HEAD
-              <div style={{ maxWidth: 740, margin: "0 auto", padding: "0 24px", display: "flex", flexDirection: "column", gap: 8 }}>
-=======
-              <div className="rvl-chat-container" style={{ maxWidth: 720, margin: "0 auto", padding: "0 20px", display: "flex", flexDirection: "column", gap: 8 }}>
->>>>>>> 02e08f3b3b29dbb0b5a0b41abe1bbec91470b0ad
+              /* Collapsed dock strip */
+              <CollapsedDock onOpen={() => setSidebarOpen(true)} onNewChat={startNewChat} />
+            )}
+          </div>
+        )}
+
+        {/* ── MAIN CHAT COLUMN ── */}
+        <main
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            minWidth: 0,
+            background: "var(--bg)",
+            position: "relative",
+          }}
+        >
+          {/* Mobile top bar */}
+          {isMobile && (
+            <div style={{
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 16px",
+              borderBottom: "1px solid var(--border)",
+              background: "var(--surface)",
+            }}>
+              <button
+                onClick={() => setSidebarOpen(true)}
+                style={{
+                  background: "none", border: "1px solid var(--border)",
+                  borderRadius: 8, padding: 7, cursor: "pointer",
+                  color: "var(--text-faint)", display: "flex", alignItems: "center",
+                }}
+              >
+                <SidebarLeft size={16} color="currentColor" />
+              </button>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+                {active?.title ?? "Assistant"}
+              </span>
+            </div>
+          )}
+
+          {/* Scrollable messages */}
+          <div
+            ref={scrollAreaRef}
+            className="rvl-noscroll"
+            style={{
+              flex: 1,
+              minHeight: 0,       /* ← fixes flexbox overflow */
+              overflowY: "auto",
+              overflowX: "hidden",
+              overscrollBehavior: "contain",
+            }}
+          >
+            {isEmpty ? (
+              <EmptyState onSend={handleSend} />
+            ) : (
+              <div style={{
+                maxWidth: 720, margin: "0 auto",
+                padding: "28px 20px 160px",
+                display: "flex", flexDirection: "column", gap: 4,
+              }}>
                 {msgs.map((msg, i) => (
                   <MessageItem key={i} msg={msg} isLast={i === msgs.length - 1} />
                 ))}
                 {loading && (
-<<<<<<< HEAD
-                   <div className="rvl-msg" style={{ display: "flex", alignItems: "flex-start", gap: 14, padding: "8px 0" }}>
-                      <div className="rvl-assistant-avatar" style={{ flexShrink: 0, marginTop: 3, width: 30, height: 30, borderRadius: 9, background: "linear-gradient(135deg, var(--accent-faint), color-mix(in srgb, var(--accent) 15%, var(--surface)))", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <Cpu size={14} color="var(--accent)" variant="Bulk" />
-                      </div>
-                      <div style={{ paddingTop: 10 }}><TypingDots /></div>
-=======
-                  <div className="rvl-msg" style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "4px 0" }}>
-                    <div style={{ flexShrink: 0, marginTop: 3, width: 26, height: 26, borderRadius: 7, background: "var(--accent-faint)", border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <Cpu size={13} color="var(--accent)" variant="Bulk" />
->>>>>>> 02e08f3b3b29dbb0b5a0b41abe1bbec91470b0ad
-                    </div>
+                  <div style={{
+                    display: "flex", alignItems: "flex-start", gap: 14,
+                    padding: "12px 0",
+                    animation: "rvl-fadein .18s cubic-bezier(.22,1,.36,1) both",
+                  }}>
+                    <AgentAvatar />
                     <ThinkingIndicator />
                   </div>
                 )}
-                <div ref={bottomRef} style={{ height: 8 }} />
+                <div ref={bottomRef} />
               </div>
             )}
           </div>
 
-          <ChatInput
-            input={input}
-            onInputChange={setInput}
-            onSend={handleSend}
-            loading={loading}
-            placeholder={active ? "Ask about tags, alerts, or operational data…" : "Start a new conversation…"}
-          />
-        </div>
+          {/* Sticky input */}
+          <div style={{
+            position: "absolute", bottom: isMobile ? 64 : 0,
+            left: 0, right: 0,
+            padding: "12px 16px 0",
+            background: "linear-gradient(to top, var(--bg) 55%, transparent)",
+            zIndex: 20,
+            pointerEvents: "none",
+          }}>
+            <div style={{ maxWidth: 720, margin: "0 auto", pointerEvents: "auto" }}>
+              <ChatInput
+                input={input}
+                onInputChange={setInput}
+                onSend={handleSend}
+                loading={loading}
+                placeholder={active ? "Ask about tags, alerts, or trends…" : "Start a new conversation…"}
+              />
+            </div>
+          </div>
+        </main>
       </div>
+
     </>
   );
 }
 
-const THINKING_STEPS = [
-  { label: "Searching documents" },
-  { label: "Querying databases" },
-  { label: "Generating response" },
-];
-
-function ThinkingIndicator() {
-  const [step, setStep] = useState(0);
-
-  useEffect(() => {
-    const t = setInterval(() => {
-      setStep(s => (s < THINKING_STEPS.length - 1 ? s + 1 : s));
-    }, 2000);
-    return () => clearInterval(t);
-  }, []);
-
+/* ── Collapsed sidebar dock (Notion-style) ── */
+function CollapsedDock({ onOpen, onNewChat }: { onOpen: () => void; onNewChat: () => void }) {
   return (
-    <div style={{ paddingTop: 8, paddingLeft: 4, display: "flex", flexDirection: "column", gap: 2 }}>
-      {THINKING_STEPS.slice(0, step + 1).map((s, i) => (
-        <div
-          key={i}
-          style={{
-            display: "flex", alignItems: "center", gap: 12, fontSize: 12.5,
-            color: i === step ? "var(--text-muted)" : "var(--text-faint)",
-            animation: "rvl-fadein .3s ease both",
-            padding: "4px 0",
-          }}
-        >
-          {/* Step indicator dot */}
-          <div style={{
-            width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
-            background: i < step ? "#22c55e" : i === step ? "var(--accent)" : "var(--border)",
-            transition: "all .4s cubic-bezier(.4,0,.2,1)",
-            boxShadow: i === step ? "0 0 0 4px color-mix(in srgb, var(--accent) 15%, transparent)" : "none",
-            transform: i === step ? "scale(1)" : "scale(0.85)"
-          }} />
-          <span style={{ fontWeight: i === step ? 500 : 400 }}>{s.label}</span>
-          {i === step && <TypingDots />}
-        </div>
-      ))}
+    <div style={{
+      display: "flex", flexDirection: "column", alignItems: "center",
+      paddingTop: 12, gap: 4, width: 44,
+    }}>
+      <button
+        onClick={onOpen}
+        title="Open sidebar"
+        style={{
+          background: "none", border: "none", cursor: "pointer",
+          padding: 10, borderRadius: 8, color: "var(--text-faint)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          transition: "background .15s, color .15s",
+        }}
+        onMouseEnter={e => {
+          (e.currentTarget as HTMLButtonElement).style.background = "var(--surface-2)";
+          (e.currentTarget as HTMLButtonElement).style.color = "var(--text)";
+        }}
+        onMouseLeave={e => {
+          (e.currentTarget as HTMLButtonElement).style.background = "none";
+          (e.currentTarget as HTMLButtonElement).style.color = "var(--text-faint)";
+        }}
+      >
+        <SidebarLeft size={17} color="currentColor" />
+      </button>
+      <button
+        onClick={onNewChat}
+        title="New chat"
+        style={{
+          background: "none", border: "none", cursor: "pointer",
+          padding: 10, borderRadius: 8, color: "var(--text-faint)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          transition: "background .15s, color .15s",
+        }}
+        onMouseEnter={e => {
+          (e.currentTarget as HTMLButtonElement).style.background = "var(--surface-2)";
+          (e.currentTarget as HTMLButtonElement).style.color = "var(--text)";
+        }}
+        onMouseLeave={e => {
+          (e.currentTarget as HTMLButtonElement).style.background = "none";
+          (e.currentTarget as HTMLButtonElement).style.color = "var(--text-faint)";
+        }}
+      >
+        {/* Pencil icon substitute */}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-6" />
+          <path d="M18.375 2.625a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4Z" />
+        </svg>
+      </button>
     </div>
   );
 }
 
-function TypingDots() {
+/* ── Agent avatar ── */
+function AgentAvatar() {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, height: 16, marginLeft: 2 }}>
-      {[0, 1, 2].map(n => <span key={n} style={{ display: "inline-block", width: 3, height: 3, borderRadius: "50%", background: "var(--text-faint)", animation: "rvl-bounce 1.3s ease-in-out infinite", animationDelay: `${n * 0.18}s` }} />)}
-    </span>
+    <div style={{
+      flexShrink: 0, width: 32, height: 32, borderRadius: 10,
+      background: "var(--accent-faint)", border: "1px solid rgba(158,90,50,.2)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      boxShadow: "0 1px 4px rgba(0,0,0,.06)",
+    }}>
+      <Cpu size={16} color="var(--accent)" variant="Bulk" />
+    </div>
+  );
+}
+
+/* ── Empty state ── */
+function EmptyState({ onSend }: { onSend: (t: string) => void }) {
+  return (
+    <div style={{
+      display: "flex", flexDirection: "column", alignItems: "center",
+      justifyContent: "center", minHeight: "75dvh",
+      gap: 28, padding: "0 24px 80px", textAlign: "center",
+      animation: "rvl-fadein .32s cubic-bezier(.22,1,.36,1) both",
+    }}>
+      <div style={{ position: "relative" }}>
+        <div style={{
+          width: 60, height: 60, borderRadius: 18,
+          background: "var(--accent-faint)",
+          border: "1px solid color-mix(in srgb, var(--accent) 25%, transparent)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          boxShadow: "0 4px 24px color-mix(in srgb, var(--accent) 15%, transparent)",
+        }}>
+          <Flash size={28} color="var(--accent)" variant="Bulk" />
+        </div>
+        <div style={{
+          position: "absolute", inset: 0, borderRadius: 18,
+          animation: "rvl-pulse-ring 3.5s ease-in-out infinite",
+          pointerEvents: "none",
+        }} />
+      </div>
+      <div style={{ maxWidth: 380 }}>
+        <h2 style={{ fontSize: 21, fontWeight: 700, letterSpacing: "-0.025em", margin: "0 0 8px", color: "var(--text)" }}>
+          RVL Lamination Assistant
+        </h2>
+        <p style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.7, margin: 0 }}>
+          Operational intelligence at your fingertips. Ask about machine performance,
+          active alerts, or production trends.
+        </p>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 7, justifyContent: "center", maxWidth: 500 }}>
+        {SUGGESTED.map((s, idx) => (
+          <button
+            key={s}
+            className="rvl-msg-chip"
+            onClick={() => onSend(s)}
+            style={{
+              padding: "7px 15px", fontSize: 12, fontWeight: 500,
+              borderRadius: 999, cursor: "pointer", fontFamily: "inherit",
+              animation: `rvl-chip-in .32s cubic-bezier(.22,1,.36,1) ${idx * 0.06}s both`,
+            }}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── Thinking indicator — Vercel-style ── */
+const THINKING_STEPS = [
+  "Analyzing operational context",
+  "Fetching sensor telemetry",
+  "Evaluating thresholds",
+  "Finalizing response",
+];
+
+function ThinkingIndicator() {
+  const [step, setStep] = useState(0);
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      // Fade out → swap text → fade in
+      setVisible(false);
+      setTimeout(() => {
+        setStep(s => (s < THINKING_STEPS.length - 1 ? s + 1 : s));
+        setVisible(true);
+      }, 220);
+    }, 2200);
+    return () => clearInterval(t);
+  }, []);
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center",
+      animation: "rvl-fadein .18s cubic-bezier(.22,1,.36,1) both",
+      paddingTop: 4,
+    }}>
+      <span
+        className="rvl-shimmer-text"
+        style={{
+          fontSize: 12.5, fontWeight: 500,
+          opacity: visible ? 1 : 0,
+          transition: "opacity .2s ease",
+          letterSpacing: "-0.01em",
+        }}
+      >
+        {THINKING_STEPS[step]}
+      </span>
+    </div>
   );
 }

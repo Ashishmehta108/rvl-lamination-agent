@@ -1,6 +1,6 @@
 import { openLanceDb } from "@rvl/rag";
 import { config } from "../config.js";
-import { embedText } from "../llm/ollama.js";
+import { embedText } from "../ai/gemini.js";
 
 type ChunkRow = {
   chunkId: string;

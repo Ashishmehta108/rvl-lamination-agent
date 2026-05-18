@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 7
+    },
+    "auditLog": "C:\\Users\\arora\\rvl-lamination-agent\\storage\\logs\\.0f1ab6a2d0a1b8cccbbeb7946aee0a5cd04c169a-audit.json",
+    "files": [
+        {
+            "date": 1777640842080,
+            "name": "C:\\Users\\arora\\rvl-lamination-agent\\storage\\logs\\pipeline-2026-05-01.log",
+            "hash": "034c3ec9a8430da8a0be688014283c413e7d4e95818c3279f261f7a0a91ecb83"
+        }
+    ],
+    "hashType": "sha256"
+}

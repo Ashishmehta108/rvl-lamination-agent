@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nonwoven Agent Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card-bg: rgba(30, 41, 59, 0.7);
+            --border: rgba(255, 255, 255, 0.1);
+            --primary: #38bdf8;
+            --secondary: #94a3b8;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --text: #f8fafc;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            background-image: radial-gradient(circle at 50% 0%, #1e293b 0%, #0f172a 100%);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            backdrop-filter: blur(10px);
+            padding: 1.5rem;
+            border-radius: 1rem;
+            border: 1px solid var(--border);
+            background: var(--card-bg);
+        }
+
+        .logo { font-weight: 700; font-size: 1.5rem; letter-spacing: -0.025em; color: var(--primary); }
+        .status-pill {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 2rem;
+            background: rgba(0, 0, 0, 0.3);
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); transition: background 0.3s; }
+        .dot.online { background: var(--success); box-shadow: 0 0 10px var(--success); }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+            border-radius: 1rem;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .card:hover { border-color: var(--primary); transform: translateY(-2px); }
+
+        .label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; color: var(--secondary); letter-spacing: 0.05em; }
+        .value { font-family: 'JetBrains Mono', monospace; font-size: 2rem; font-weight: 500; }
+        .unit { font-size: 1rem; color: var(--secondary); margin-left: 0.25rem; }
+
+        .fault { color: var(--danger); font-weight: 700; }
+        .warn { color: var(--warning); }
+
+        .pipeline-status {
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 2rem;
+        }
+
+        .mini-card {
+            background: rgba(0,0,0,0.2);
+            padding: 1rem;
+            border-radius: 0.75rem;
+            border: 1px solid var(--border);
+        }
+
+        .ts { font-size: 0.75rem; color: var(--secondary); margin-top: auto; padding-top: 1rem; }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        .loading { animation: pulse 1.5s infinite; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">NONWOVEN AGENT <span style="font-weight: 300; color: var(--text)">v2.0</span></div>
+        <div style="display: flex; gap: 1rem;">
+            <div class="status-pill">
+                <div id="plc-dot" class="dot"></div>
+                PLC: <span id="plc-status">OFFLINE</span>
+            </div>
+            <div class="status-pill">
+                <div id="push-dot" class="dot"></div>
+                SERVER: <span id="push-status">CHECKING</span>
+            </div>
+        </div>
+    </header>
+
+    <div id="dashboard-sections">
+        <!-- Sections will be injected here -->
+    </div>
+
+    <div class="pipeline-status">
+        <div class="mini-card">
+            <div class="label">Sequence ID</div>
+            <div id="seq-val" class="value" style="font-size: 1.25rem;">0</div>
+        </div>
+        <div class="mini-card">
+            <div class="label">Read Count</div>
+            <div id="read-count" class="value" style="font-size: 1.25rem;">0</div>
+        </div>
+        <div class="mini-card">
+            <div class="label">Last Push</div>
+            <div id="last-push-ts" class="value" style="font-size: 0.875rem;">Never</div>
+        </div>
+        <div class="mini-card">
+            <div class="label">Last Error</div>
+            <div id="last-error" class="value" style="font-size: 0.875rem; color: var(--secondary);">None</div>
+        </div>
+    </div>
+
+    <div class="ts" id="last-update">Last update: --</div>
+
+    <script>
+        // Tag configuration with section grouping (derived from tags.js)
+        const SECTIONS = {
+            extruder: 'Extruder Unit',
+            laminator: 'Laminator Unit',
+            winder: 'Winder Unit',
+            master: 'Master Controls',
+            unwinder: 'Unwinder',
+            meters: 'Production Meters',
+            gsm: 'GSM / Weight',
+            alarms: 'Safety & Alarms',
+            splice: 'Splice Control'
+        };
+
+        const TAG_CONFIG = {
+            // EXTRUDER
+            EXTRUDER_RPM: { label: 'RPM', unit: 'RPM', section: 'extruder' },
+            EXTRUDER_AMP: { label: 'Amps', unit: 'A', section: 'extruder' },
+            EXTRUDER_SPEED_PCT: { label: 'Speed', unit: '%', section: 'extruder' },
+            EXTRUDER_ON_OFF: { label: 'Status', unit: '', section: 'extruder', isBool: true },
+            EXTRUDER_FAULT: { label: 'Fault', unit: '', section: 'extruder', isBool: true, isFault: true },
+            EXTRUDER_SPEED_VOL: { label: 'Speed Vol', unit: 'V', section: 'extruder' },
+
+            // LAMINATOR
+            LAMINATOR_MPM: { label: 'Speed', unit: 'm/min', section: 'laminator' },
+            LAMINATOR_AMP: { label: 'Amps', unit: 'A', section: 'laminator' },
+            LAMINATOR_SPEED_PCT: { label: 'Speed', unit: '%', section: 'laminator' },
+            LAMINATOR_ON_OFF: { label: 'Status', unit: '', section: 'laminator', isBool: true },
+            LAMINATOR_FAULT: { label: 'Fault', unit: '', section: 'laminator', isBool: true, isFault: true },
+            LAMINATOR_SPEED_VOL: { label: 'Speed Vol', unit: 'V', section: 'laminator' },
+
+            // WINDER
+            WINDER_AMP: { label: 'Amps', unit: 'A', section: 'winder' },
+            WINDER_TENSION_PCT: { label: 'Tension', unit: '%', section: 'winder' },
+            WINDER_ON_OFF: { label: 'Status', unit: '', section: 'winder', isBool: true },
+            WINDER_FAULT: { label: 'Fault', unit: '', section: 'winder', isBool: true, isFault: true },
+            WINDER_TENSION_VOL: { label: 'Tension Vol', unit: 'V', section: 'winder' },
+
+            // MASTER
+            MASTER_SPEED_PCT: { label: 'Master Speed', unit: '%', section: 'master' },
+
+            // UNWINDER
+            UW_SET_TENSION: { label: 'Set Tension', unit: '', section: 'unwinder' },
+            UW_PV_TENSION: { label: 'Actual Tension', unit: '', section: 'unwinder' },
+
+            // METERS
+            RUNNING_METER: { label: 'Running', unit: 'm', section: 'meters' },
+            TOTAL_METER: { label: 'Total', unit: 'm', section: 'meters' },
+
+            // GSM
+            GSM_ENTRY: { label: 'GSM Entry', unit: 'g/m²', section: 'gsm' },
+            GRAM_ENTRY: { label: 'Gram Entry', unit: 'g', section: 'gsm' },
+
+            // ALARMS
+            ALARM_IND: { label: 'Alarm Ind.', unit: '', section: 'alarms', isBool: true, isFault: true },
+            EMG_STOP: { label: 'E-Stop', unit: '', section: 'alarms', isBool: true, isFault: true },
+
+            // SPLICE
+            SPLICE_ON_OFF: { label: 'Splice', unit: '', section: 'splice', isBool: true },
+            SPLICE_SPEED: { label: 'Splice Speed', unit: '', section: 'splice' },
+        };
+
+        function initDashboard() {
+            const container = document.getElementById('dashboard-sections');
+            Object.entries(SECTIONS).forEach(([id, title]) => {
+                const section = document.createElement('div');
+                section.className = 'section-container';
+                section.innerHTML = `
+                    <h2 style="margin: 2rem 0 1rem 0; font-size: 1rem; color: var(--primary); text-transform: uppercase; letter-spacing: 0.1em;">${title}</h2>
+                    <div class="grid" id="section-${id}"></div>
+                `;
+                container.appendChild(section);
+            });
+        }
+
+        async function update() {
+            try {
+                const res = await fetch('/api/state');
+                const state = await res.json();
+
+                // Status indicators
+                document.getElementById('plc-dot').className = state.plcOnline ? 'dot online' : 'dot';
+                document.getElementById('plc-status').innerText = state.plcOnline ? 'ONLINE' : (state.plcError ? 'ERROR' : 'OFFLINE');
+                
+                document.getElementById('push-dot').className = state.lastPush && state.lastPush.success ? 'dot online' : 'dot';
+                document.getElementById('push-status').innerText = state.lastPush && state.lastPush.success ? 'HEALTHY' : 'FAILURE';
+
+                document.getElementById('seq-val').innerText = state.ingestSeq;
+                document.getElementById('read-count').innerText = state.readCount;
+                document.getElementById('last-push-ts').innerText = state.lastPush && state.lastPush.ts ? new Date(state.lastPush.ts).toLocaleTimeString() : 'Never';
+                document.getElementById('last-error').innerText = state.plcError || (state.lastPush && state.lastPush.error) || 'None';
+                document.getElementById('last-update').innerText = 'Last update: ' + new Date().toLocaleString();
+
+                Object.entries(TAG_CONFIG).forEach(([key, cfg]) => {
+                    let card = document.getElementById(`card-${key}`);
+                    if (!card) {
+                        card = document.createElement('div');
+                        card.id = `card-${key}`;
+                        card.className = 'card';
+                        document.getElementById(`section-${cfg.section}`).appendChild(card);
+                    }
+                    
+                    let val = state.tags ? state.tags[key] : null;
+                    let displayVal = '--';
+                    let stateClass = '';
+
+                    if (cfg.isBool) {
+                        const isOn = val === 1 || val === true;
+                        displayVal = isOn ? (cfg.isFault ? '<span class="fault">ACTIVE</span>' : '<span style="color:var(--success)">ON</span>') 
+                                          : (cfg.isFault ? '<span style="color:var(--success)">CLEAR</span>' : '<span style="color:var(--secondary)">OFF</span>');
+                    } else if (typeof val === 'number') {
+                        displayVal = val.toFixed(key.includes('METER') ? 1 : 2);
+                    }
+
+                    card.innerHTML = `
+                        <div class="label">${cfg.label}</div>
+                        <div class="value">${displayVal}<span class="unit">${cfg.unit}</span></div>
+                    `;
+                });
+
+            } catch (err) {
+                console.error('Update failed:', err);
+            }
+        }
+
+        initDashboard();
+        setInterval(update, 1000);
+        update();
+    </script>
+</body>
+</html>

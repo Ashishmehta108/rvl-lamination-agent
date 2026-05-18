@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://127.0.0.1:7000";
-const API_TOKEN = process.env.API_AUTH_TOKEN || "dev-local-token";
+const API_TOKEN = "rvl-prod-secure-token-7a2b9f";
+// "dev-local-token";
 
 export async function GET(req: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const resolvedParams = await context.params;
@@ -18,8 +19,20 @@ async function handleRequest(req: NextRequest, pathSegments: string[]) {
   const searchParams = req.nextUrl.searchParams.toString();
   const url = `${BACKEND_URL}/${path}${searchParams ? `?${searchParams}` : ""}`;
 
+  const jwtToken = req.cookies.get("rvl_token")?.value;
+  const clientAuth = req.headers.get("Authorization");
+
   const headers = new Headers(req.headers);
-  headers.set("Authorization", `Bearer ${API_TOKEN}`);
+  if (path.startsWith("chat") || path.startsWith("auth/")) {
+    if (clientAuth) {
+      headers.set("Authorization", clientAuth);
+    } else if (jwtToken) {
+      headers.set("Authorization", `Bearer ${jwtToken}`);
+    }
+  } else {
+    headers.set("Authorization", `Bearer ${API_TOKEN}`);
+  }
+
   // Remove host header to avoid SSL/Routing issues
   headers.delete("host");
 

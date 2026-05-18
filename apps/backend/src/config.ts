@@ -39,11 +39,30 @@ export const config = {
   // DBs
   postgresUrl: getEnv("POSTGRES_URL"),
   mongoUrl: getEnv("MONGODB_URL"),
+  machineId: getEnv("MACHINE_ID", "lamination-01"),
 
   // Queue (pg-boss uses Postgres)
   queueSchema: getEnv("QUEUE_SCHEMA", "pgboss"),
 
-  // Local LLM via Ollama
+  // AI provider: gemini | bedrock
+  aiProvider: (getEnv("AI_PROVIDER", "gemini").toLowerCase() === "bedrock" ? "bedrock" : "gemini") as "gemini" | "bedrock",
+  geminiApiKey: getEnv("GEMINI_API_KEY", ""),
+  geminiModel: getEnv("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+  geminiReportModel: getEnv("GEMINI_REPORT_MODEL", getEnv("GEMINI_MODEL", "gemini-2.5-flash-lite")),
+  geminiEmbeddingModel: getEnv("GEMINI_EMBEDDING_MODEL", "text-embedding-004"),
+  geminiReportTemperature: getEnvNum("GEMINI_REPORT_TEMPERATURE", 0),
+  geminiReportStepTimeoutMs: getEnvNum("GEMINI_REPORT_STEP_TIMEOUT_MS", 60_000),
+
+  bedrockRegion: getEnv("BEDROCK_REGION", getEnv("AWS_REGION", "ap-south-1")),
+  bedrockModelId: getEnv("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0"),
+  bedrockReportModelId: getEnv("BEDROCK_REPORT_MODEL_ID", getEnv("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")),
+  bedrockEmbeddingModelId: getEnv("BEDROCK_EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0"),
+  bedrockMaxTokens: getEnvNum("BEDROCK_MAX_TOKENS", 4096),
+  bedrockReportTemperature: getEnvNum("BEDROCK_REPORT_TEMPERATURE", 0),
+  bedrockReportStepTimeoutMs: getEnvNum("BEDROCK_REPORT_STEP_TIMEOUT_MS", 60_000),
+  embeddingProvider: (getEnv("EMBEDDING_PROVIDER", "gemini").toLowerCase() === "bedrock" ? "bedrock" : "gemini") as "gemini" | "bedrock",
+
+  // Legacy Ollama settings retained for old env compatibility.
   ollamaBaseUrl: getEnv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
   ollamaModel: getEnv("OLLAMA_MODEL", "phi4-mini"),
   ollamaNumCtx: getEnvNum("OLLAMA_NUM_CTX", 2048),
@@ -57,8 +76,14 @@ export const config = {
   llmTargetMaxHistoryMessages: getEnvNum("LLM_TARGET_MAX_HISTORY_MESSAGES", 6),
   llmStrictGrounding: getEnvBool("LLM_STRICT_GROUNDING", true),
 
-  // Google Gemini
-  googleApiKey: process.env["GOOGLE_GENERATIVE_AI_API_KEY"] || "",
+  /** Heuristic plan step: model = one small JSON classification LLM call; regex = patterns only */
+  queryClassifierMode: (() => {
+    const m = getEnv("QUERY_CLASSIFIER_MODE", "model").toLowerCase();
+    return m === "regex" ? "regex" : "model";
+  })() as "model" | "regex",
+  queryClassifierTimeoutMs: getEnvNum("QUERY_CLASSIFIER_TIMEOUT_MS", 5000),
+  /** Second small LLM call for diagnostic plans: ordered tool steps JSON */
+  queryDecomposerTimeoutMs: getEnvNum("QUERY_DECOMPOSER_TIMEOUT_MS", 8000),
 
   /** Scheduled / narrative reports (defaults to chat model if unset) */
   ollamaReportModel: (() => {
@@ -84,6 +109,7 @@ export const config = {
   // Security
   mcpAuthToken: getEnv("MCP_AUTH_TOKEN", "dev-local-token"),
   apiAuthToken: getEnv("API_AUTH_TOKEN", "dev-local-token"),
+  jwtSecret: getEnv("JWT_SECRET", "dev-jwt-secret-change-in-production"),
   enableCors: getEnvBool("ENABLE_CORS", true),
 
   // Files

@@ -1,0 +1,125 @@
+{
+  "batch_id": "349c832f-fa25-4387-9eac-f2f29195744a",
+  "seq": 1,
+  "retry_count": 0,
+  "last_error": null,
+  "created_at": "2026-05-01T13:09:58.028Z",
+  "payload": {
+    "machineId": "lamination-01",
+    "machineRevision": "v1",
+    "sentAt": "2026-05-01T13:09:58.028Z",
+    "seq": 1,
+    "tags": [
+      {
+        "tagSlug": "EXTRUDER_RPM",
+        "value": 30,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "EXTRUDER_AMP",
+        "value": 28,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "EXTRUDER_SPEED_PCT",
+        "value": 100,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "LAMINATOR_MPM",
+        "value": 43.21,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "LAMINATOR_AMP",
+        "value": 8.3,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "LAMINATOR_SPEED_PCT",
+        "value": 96,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "WINDER_AMP",
+        "value": 4,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "WINDER_TENSION_PCT",
+        "value": 24,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "RUNNING_METER",
+        "value": 654006.1,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "TOTAL_METER",
+        "value": 1463646336,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "GSM_ENTRY",
+        "value": 12,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "GRAM_ENTRY",
+        "value": 20,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "UW_SET_TENSION",
+        "value": 160,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "UW_PV_TENSION",
+        "value": 105,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "EXTRUDER_SPEED_VOL",
+        "value": 6000,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "LAMINATOR_SPEED_VOL",
+        "value": 5760,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "WINDER_TENSION_VOL",
+        "value": 4800,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "MASTER_SPEED_PCT",
+        "value": 100,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "EMG_STOP",
+        "value": false,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "EXTRUDER_ON_OFF",
+        "value": true,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "LAMINATOR_ON_OFF",
+        "value": true,
+        "ts": "2026-05-01T13:09:58.028Z"
+      },
+      {
+        "tagSlug": "WINDER_ON_OFF",
+        "value": true,
+        "ts": "2026-05-01T13:09:58.028Z"
+      }
+    ]
+  }
+}

@@ -1,21 +1,18 @@
 "use client";
  
 import { useTheme } from "../lib/theme";
-import { Sun1, Moon, ArrowLeft2, Menu, CloseSquare } from "iconsax-reactjs";
+import { Sun1, Moon, ArrowLeft2 } from "iconsax-reactjs";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAppContext } from "../context/AppContext";
 
 interface AppHeaderProps {
-  /** Back link — pass null to hide */
   backHref?: string | null;
   backLabel?: string;
-  /** Left title area */
   icon?: ReactNode;
   title: string;
   subtitle?: string;
-  /** Slot rendered to the right of the theme toggle */
   rightSlot?: ReactNode;
 }
 
@@ -60,155 +57,189 @@ export default function AppHeader({
   };
 
   return (
-    <header 
-      style={{
-        position: "sticky",
-        top: 0,
-        zIndex: 100,
-        height: 56,
-        borderBottom: "1px solid var(--border)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "0 clamp(12px, 3vw, 24px)",
-        background: "rgba(var(--surface-rgb), 0.8)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-      }}
-    >
-      {/* ── Left Section: Logo + Divider + Title ───────────────── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flexShrink: 1 }}>
-        <Link href="/" style={{ display: "flex", alignItems: "center", textDecoration: "none", flexShrink: 0 }}>
-          <span style={{ fontSize: 13, fontWeight: 900, letterSpacing: "0.1em", color: "var(--accent)" }}>
-            RVL
-          </span>
-        </Link>
+    <>
+      <style>{`
+        .rvl-header {
+          position: sticky;
+          top: 0;
+          z-index: 40;
+          min-height: 52px;
+          background: var(--surface);
+          border-bottom: 1px solid var(--border);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 8px 20px;
+          gap: 8px;
+          box-shadow: var(--shadow);
+        }
 
-        <div style={{ width: 1, height: 20, background: "var(--border)", flexShrink: 0 }} />
+        .rvl-header-left {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-width: 0;
+          flex: 1 1 0;
+          overflow: hidden;
+        }
 
-        {backHref != null && (
-          <Link
-            href={backHref}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              fontSize: 12,
-              fontWeight: 500,
-              color: "var(--text-muted)",
-              padding: "4px 8px",
-              borderRadius: 6,
-              transition: "all .15s ease",
-              flexShrink: 0
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget as HTMLElement).style.background = "var(--surface-2)";
-              (e.currentTarget as HTMLElement).style.color = "var(--text)";
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget as HTMLElement).style.background = "transparent";
-              (e.currentTarget as HTMLElement).style.color = "var(--text-muted)";
-            }}
-          >
-            <ArrowLeft2 size={14} />
-            <span className="rvl-hide-mobile">{backLabel}</span>
-          </Link>
-        )}
+        .rvl-header-back {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          font-size: 12px;
+          color: var(--text-muted);
+          padding: 4px 8px;
+          border-radius: 6px;
+          text-decoration: none;
+          white-space: nowrap;
+          flex-shrink: 0;
+          transition: background .15s, color .15s;
+        }
+        .rvl-header-back:hover {
+          background: var(--surface-2);
+          color: var(--text);
+        }
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          {icon && (
-            <div className="rvl-hide-mobile" style={{
-              width: 24, height: 24, borderRadius: 6,
-              background: "var(--accent-faint)", border: "1px solid var(--border)",
-              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-            }}>
-              {icon}
-            </div>
+        .rvl-header-divider {
+          width: 1px;
+          height: 18px;
+          background: var(--border);
+          flex-shrink: 0;
+        }
+
+        .rvl-header-title-group {
+          display: flex;
+          align-items: center;
+          gap: 9px;
+          min-width: 0;
+          flex: 1 1 0;
+          overflow: hidden;
+        }
+
+        .rvl-header-icon {
+          width: 28px;
+          height: 28px;
+          border-radius: 7px;
+          background: var(--accent-faint);
+          border: 1px solid var(--border);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+
+        .rvl-header-text {
+          min-width: 0;
+          overflow: hidden;
+        }
+
+        .rvl-header-name {
+          font-size: 13.5px;
+          font-weight: 600;
+          color: var(--text);
+          line-height: 1.2;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .rvl-header-sub {
+          font-size: 10.5px;
+          color: var(--text-muted);
+          line-height: 1.4;
+          margin-top: 1px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .rvl-header-right {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-shrink: 0;
+        }
+
+        .rvl-theme-btn {
+          width: 32px;
+          height: 32px;
+          border-radius: 7px;
+          border: 1px solid var(--border);
+          background: var(--surface-2);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          color: var(--text-muted);
+          transition: background .15s, border-color .15s;
+          flex-shrink: 0;
+        }
+        .rvl-theme-btn:hover { background: var(--surface-3); }
+
+        /* On small screens: hide back label text, keep icon */
+        @media (max-width: 480px) {
+          .rvl-header {
+            padding: 8px 14px;
+          }
+          .rvl-back-label {
+            display: none;
+          }
+          .rvl-header-back {
+            padding: 4px 6px;
+          }
+          .rvl-header-name {
+            font-size: 13px;
+          }
+        }
+
+        /* Shrink right slot items on small screens */
+        @media (max-width: 600px) {
+          .rvl-header-right {
+            gap: 4px;
+          }
+        }
+      `}</style>
+
+      <header className="rvl-header">
+
+        {/* ── Left ── */}
+        <div className="rvl-header-left">
+          {backHref != null && (
+            <>
+              <a href={backHref} className="rvl-header-back">
+                <ArrowLeft2 size={13} color="currentColor" />
+                <span className="rvl-back-label">{backLabel}</span>
+              </a>
+              <div className="rvl-header-divider" />
+            </>
           )}
-          <div style={{ minWidth: 0 }}>
-            <h1 style={{ 
-              fontSize: "clamp(13px, 3.5vw, 15px)", 
-              fontWeight: 700, 
-              color: "var(--text)", 
-              lineHeight: 1.1, 
-              margin: 0,
-              whiteSpace: "nowrap", 
-              overflow: "hidden", 
-              textOverflow: "ellipsis" 
-            }}>
-              {title}
-            </h1>
-            {subtitle && (
-              <p className="rvl-hide-mobile" style={{ 
-                fontSize: 10, 
-                color: "var(--text-faint)", 
-                margin: "2px 0 0",
-                whiteSpace: "nowrap", 
-                overflow: "hidden", 
-                textOverflow: "ellipsis" 
-              }}>
-                {subtitle}
-              </p>
-            )}
+
+          <div className="rvl-header-title-group">
+            {icon && <div className="rvl-header-icon">{icon}</div>}
+            <div className="rvl-header-text">
+              <div className="rvl-header-name">{title}</div>
+              {subtitle && <div className="rvl-header-sub">{subtitle}</div>}
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* ── Center/Right Section: Nav + Actions + Theme ───────── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        {/* Desktop Navigation */}
-        <nav className="rvl-hide-mobile" style={{ display: "flex", alignItems: "center", gap: 4, marginRight: 8 }}>
-          {navLink("/", "Dashboard")}
-          {navLink("/production", "Production")}
-          {navLink("/reports", "Reports")}
-          {navLink("/export", "Export")}
-          {navLink("/chat", "Assistant")}
-        </nav>
+        {/* ── Right ── */}
+        <div className="rvl-header-right">
+          {rightSlot}
+          <button
+            className="rvl-theme-btn"
+            onClick={toggle}
+            title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+          >
+            {theme === "light"
+              ? <Moon size={14} color="var(--text-muted)" variant="Bulk" />
+              : <Sun1 size={14} color="var(--text-muted)" variant="Bulk" />
+            }
+          </button>
+        </div>
 
-        {/* Dynamic Actions Slot */}
-        {rightSlot && (
-          <div className="rvl-hide-mobile" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 1, height: 20, background: "var(--border)", marginRight: 4 }} />
-            {rightSlot}
-          </div>
-        )}
-
-        {/* Theme Toggle */}
-        <button
-          onClick={toggle}
-          title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-          style={{
-            width: 34, height: 34, borderRadius: 8,
-            border: "1px solid var(--border)",
-            background: "var(--surface-2)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            cursor: "pointer", color: "var(--text-muted)", transition: "all .15s ease",
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-3)")}
-          onMouseLeave={(e) => (e.currentTarget.style.background = "var(--surface-2)")}
-        >
-          {theme === "light" 
-            ? <Moon size={16} variant="Bulk" /> 
-            : <Sun1 size={16} variant="Bulk" />
-          }
-        </button>
-
-        {/* Mobile Menu Trigger */}
-        <button
-          className="rvl-show-mobile-flex"
-          onClick={() => setMenuOpen(!menuOpen)}
-          style={{
-            display: "none", width: 34, height: 34, borderRadius: 8,
-            border: "1px solid var(--border)",
-            background: "var(--surface-2)",
-            alignItems: "center", justifyContent: "center",
-            cursor: "pointer", color: "var(--text-muted)",
-          }}
-        >
-          {menuOpen ? <CloseSquare size={18} variant="Bulk" /> : <Menu size={18} variant="Bulk" />}
-        </button>
-      </div>
-    </header>
+      </header>
+    </>
   );
 }

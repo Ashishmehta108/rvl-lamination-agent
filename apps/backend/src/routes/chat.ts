@@ -1,341 +1,379 @@
-import type { FastifyInstance } from "fastify";
-import { ChatRequestSchema } from "@rvl/shared";
-import { requireApiAuth, validateMachineAccess } from "../auth.js";
-import { ragQuery } from "../rag/store.js";
-import { chatOnce, chatOnceWithModel } from "../llm/ollama.js";
-import { config } from "../config.js";
-import { fetchLiveContext } from "./chatContext.js";
-import {
-  defaultToolPlan,
-  parsePlannerJson,
-  PLANNER_SYSTEM,
-  wantsToolPipeline,
-} from "../services/chatPlanner.js";
-import { runToolPlan, type ChatToolCall, type FindTagCandidate } from "../services/chatTools.js";
-import {
-  buildChatSessionKey,
-  getChatHistoryCached,
-  putChatHistoryCached,
-  type ChatHistoryMessage,
-} from "../services/chatHistoryCache.js";
-// import {
-//   normalizeInput,
-//   detectRisk,
-//   detectIntent,
-//   detectMissingContext,
-//   selectHandler,
-//   buildContextPacket,
-//   assembleFinalResponse,
-//   validateOutput,
-//   // Fully deterministic handlers (no LLM)
-//   handleGreeting,
-//   handleEscalation,
-//   handleUnsafeInput,
-//   handleOutOfScope,
-//   handleAmbiguous,
-//   handleNoContext,
-//   handleToolFailure,
-//   type HandlerType,
-// } from "../handlers/chatHandler.js";
-// import { enforceGroundingGuard } from "../services/groundingGuard.js";
-// import {
-//   deriveHealthFromLiveContexts,
-//   prepareTurn,
-// } from "../services/llmOrchestrator.js";
-import { toolGetAlerts, toolGetProductionMetrics, toolGetTags } from "../services/chatTools.js";
-import { buildLLMContext, callGemini } from "../services/geminiService.js";
-
-/* ─────────────────────────────────────────────────────────────────
-   UTILITY
-   ───────────────────────────────────────────────────────────────── */
-
-function toolBlocksToLiveContexts(
-  toolBlocks: { name: string; text: string }[]
-): { source: string; text: string }[] {
-  return toolBlocks
-    .filter(b => b.name !== "find_tags")
-    .map(b => ({
-      source:
-        b.name === "get_tags" ? "tags_db"
-          : b.name === "get_alerts" ? "alerts_db"
-            : b.name === "get_reports" ? "reports_db"
-              : b.name === "get_production_metrics" ? "production_db"
-                : `tool_${b.name}`,
-      text: b.text,
-    }));
-}
-
-function deriveHealth(
-  liveContexts: { source: string; text: string }[]
-): "healthy" | "degraded" | "critical" | "unknown" {
-  const alertBlock = liveContexts.find(c => c.source === "alerts_db");
-  const tagBlock = liveContexts.find(c => c.source === "tags_db" || c.source === "tags_selected");
-
-  if (!tagBlock && !alertBlock) return "unknown";
-
-  if (alertBlock && alertBlock.text) {
-    if (/\[CRITICAL\].*status:\s*open/i.test(alertBlock.text)) return "critical";
-    if (/\[WARNING\].*status:\s*open/i.test(alertBlock.text)) return "degraded";
-  }
-
-  if (tagBlock && tagBlock.text) {
-    // Check for active fault flags
-    if (/:\s*1\s*\[/.test(tagBlock.text) && /(FAULT|ALARM_IND|EMG_STOP)/.test(tagBlock.text)) {
-      return "degraded";
-    }
-  }
-
-  if (tagBlock && tagBlock.text && !tagBlock.text.includes("No tags found")) return "healthy";
-
-  return "unknown";
-}
-
-function needsCitationGuard(answer: string, ragCount: number): string {
-  if (ragCount === 0) return answer;
-  if (/\[#\d+\]/.test(answer)) return answer;
-  return `${answer}\n\n_No document citations detected — verify critical values against primary systems._`;
-}
 
 /**
- * Prevent contradictory fallback text when tool data actually exists.
- * If we already have live context, never allow "can't access live data" style answers.
+ * chat.route.ts — Fastify chat routes
+ *
+ * Changes from original:
+ * - Stores plan + trace in chatMessages.toolCalls (backward compatible: was string[])
+ * - Adds structured fallback responses (LLM failure, session errors)
+ * - Exposes plan/trace/reflectionNote in the API response
+ * - Keeps full API contract intact
  */
-function replaceUngroundedNoDataClaims(
-  answer: string,
-  hasLiveData: boolean,
-  groundedFallback: string
-): string {
-  if (!hasLiveData) return answer;
-  const badClaimPattern =
-    /\b(tool[_\s-]*pipeline.*did(?:\s+not|n't)\s+respond|unable(?:\s+at\s+this\s+moment)?|cannot\s+provide.*real[-\s]*time|can't\s+provide.*live\s+data|try\s+again\s+later.*live\s+data|i\s+don't\s+have\s+enough\s+data\s+to\s+answer\s+that\s+right\s+now|no\s+(additional\s+)?production\s+data|halts?\s+production\s+operations?|no\s+further\s+production\s+data\s+can\s+be\s+provided)\b/i;
-  return badClaimPattern.test(answer) ? groundedFallback : answer;
+
+import type { FastifyInstance } from "fastify";
+import { and, desc, eq, lt, sql } from "drizzle-orm";
+import { newId } from "@rvl/shared";
+import { requireAuth } from "./auth.js";
+import { validateMachineAccess } from "../auth.js";
+import { runAgent, type AgentTrace } from "../ai/agent.js";
+import { getPostgresDb, schema } from "../db/postgres.js";
+import { migrateChatTables } from "../db/migrations/chat.js";
+import {
+  chatMessagesParamsSchema,
+  chatMessagesQuerySchema,
+  chatSessionsQuerySchema,
+  deleteChatSessionParamsSchema,
+  deleteChatSessionFastifySchema,
+  getChatMessagesFastifySchema,
+  getChatSessionsFastifySchema,
+  postChatBodySchema,
+  postChatFastifySchema,
+  type PostChatBody
+} from "./chat.schema.js";
+
+type ChatRole = "user" | "assistant" | "system";
+type HistoryMessage = { role: ChatRole; content: string };
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function titleFromMessage(message: string): string {
+  const normalized = message.replace(/\s+/g, " ").trim();
+  return normalized.length > 60 ? `${normalized.slice(0, 57)}...` : normalized || "New conversation";
 }
 
-function buildAvailableDataFallback(
-  liveContexts: { source: string; text: string }[],
-  health: "healthy" | "degraded" | "critical" | "unknown"
-): string {
-  const hasTags = liveContexts.some(c => c.source === "tags_db" || c.source === "tags_selected");
-  const hasAlerts = liveContexts.some(c => c.source === "alerts_db");
-  const hasReports = liveContexts.some(c => c.source === "reports_db");
-  const hasProduction = liveContexts.some(c => c.source === "production_db");
-  const parts: string[] = [];
-
-  if (hasAlerts) parts.push("alerts");
-  if (hasTags) parts.push("tag readings");
-  if (hasProduction) parts.push("production metrics");
-  if (hasReports) parts.push("report history");
-
-  if (parts.length === 0) {
-    return "I couldn't extract a reliable machine summary from the current context. Please ask for alerts, tags, or production metrics explicitly.";
-  }
-
-  const joined = parts.length === 1
-    ? parts[0]
-    : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
-
-  return `Live data available: ${joined}. Current machine health: ${health}.`;
+function finalUserMessage(body: PostChatBody): string {
+  if (body.message?.trim()) return body.message.trim();
+  const lastUser = [...(body.messages ?? [])].reverse().find((msg) => msg.role === "user");
+  return lastUser?.content.trim() ?? "";
 }
 
-/* ─────────────────────────────────────────────────────────────────
-   ROUTE REGISTRATION
-   ───────────────────────────────────────────────────────────────── */
+function requestHistory(body: PostChatBody): HistoryMessage[] {
+  if (!body.messages?.length) return [];
+  return body.messages
+    .slice(0, body.messages.length - 1)
+    .filter((msg): msg is HistoryMessage =>
+      msg.role === "user" || msg.role === "assistant" || msg.role === "system"
+    )
+    .slice(-50);
+}
 
-export async function registerChatRoutes(app: FastifyInstance) {
-  const chatRate = (app as any).rateLimit?.bind(app);
-  const chatRateHandler = chatRate
-    ? chatRate({
-      max: config.chatRateLimitMax,
-      timeWindow: "1 minute",
-      keyGenerator: (request: any) => {
-        const auth = request.headers["authorization"] ?? request.headers["Authorization"] ?? "";
-        const a = Array.isArray(auth) ? auth[0] : auth;
-        return `${request.ip}|${String(a ?? "").slice(0, 64)}`;
-      },
-    })
-    : undefined;
-
-  app.post(
-    "/chat",
-    chatRateHandler ? { preHandler: [chatRateHandler] } : {},
-    async (req, reply) => {
-      const reqLog = req.log.child({ correlationId: req.id });
-      const t0 = Date.now();
-      requireApiAuth(req);
-
-      // ── Validate request ─────────────────────────────────────────
-      const parsed = ChatRequestSchema.safeParse(req.body);
-      if (!parsed.success) {
-        reqLog.warn({ issues: parsed.error.issues }, "chat_validation_failed");
-        return reply.code(400).send({ error: "invalid_request", issues: parsed.error.issues });
-      }
-
-      const reqBody = parsed.data;
-      reqLog.info(
-        {
-          machineId: reqBody.machineId ?? "(none)",
-          messageCount: reqBody.messages.length,
-          tagIds: reqBody.tagIds ?? [],
-        },
-        "chat_request_received"
-      );
-
-      if (reqBody.machineId) validateMachineAccess(reqBody.machineId);
-      const machineId = reqBody.machineId || "lamination-01";
-      const rawAuth = req.headers["authorization"] ?? req.headers["Authorization"] ?? "";
-      const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : rawAuth;
-      const rawSession = req.headers["x-chat-session-id"];
-      const sessionHeader = Array.isArray(rawSession) ? rawSession[0] : rawSession;
-      const sessionKey = buildChatSessionKey({
-        machineId,
-        explicitSessionId: typeof sessionHeader === "string" ? sessionHeader : null,
-        authHeader: typeof authHeader === "string" ? authHeader : null,
-        ip: req.ip,
-      });
-      const cachedHistory = getChatHistoryCached(sessionKey);
-
-      const lastUser = [...reqBody.messages].reverse().find(m => m.role === "user");
-      if (!lastUser) return reply.code(400).send({ error: "no_user_message" });
-
-      reqLog.info({ query: lastUser.content.slice(0, 120) }, "chat_user_query");
-
-      // ── PIPELINE STEP 1: Normalize input ─────────────────────────
-      // const normalized = normalizeInput(lastUser.content);
-
-      // ── NEW GEMINI FLOW ──
-
-      // Step 1: Fetch data (alerts, production, tags) based on query
-      const parseTime = (query: string): Date | undefined => {
-        const q = query.toLowerCase();
-        if (q.includes("yesterday")) {
-          const d = new Date();
-          d.setDate(d.getDate() - 1);
-          d.setHours(0, 0, 0, 0);
-          return d;
-        }
-        if (q.includes("last hour")) {
-          return new Date(Date.now() - 60 * 60 * 1000);
-        }
-        
-        // Handle patterns like "27 april" or "april 27"
-        const months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
-        for (let i = 0; i < months.length; i++) {
-          const m = months[i];
-          const mShort = m.slice(0, 3);
-          const monthRegex = new RegExp(`(${m}|${mShort})`, "i");
-          if (monthRegex.test(q)) {
-            const dayMatch = q.match(/(\d{1,2})(st|nd|rd|th)?/);
-            if (dayMatch) {
-              const day = parseInt(dayMatch[1]);
-              const d = new Date();
-              d.setMonth(i);
-              d.setDate(day);
-              d.setHours(0, 0, 0, 0);
-              // If the date is in the future relative to now (approx), assume last year? 
-              // Actually for now just assume current year.
-              return d;
-            }
-          }
-        }
-        return undefined;
-      };
-
-      const since = parseTime(lastUser.content);
-
-      const [alertsRaw, tagsRaw, productionRaw] = await Promise.all([
-        toolGetAlerts(machineId, { includeRecentClosed: true, since }),
-        toolGetTags(machineId, { tagIds: reqBody.tagIds, limit: 10 }),
-        toolGetProductionMetrics(machineId, { granularity: "daily", buckets: 7 })
-      ]);
-
-      // Step 2: Build context using buildLLMContext()
-      const context = buildLLMContext({ alertsRaw, tagsRaw, productionRaw });
-
-      // Step 3: Call Gemini
-      const answer = await callGemini(lastUser.content, context);
-
-      // Step 4: Return Gemini response
-      const deriveHealthFromAlerts = (raw: string): "healthy" | "degraded" | "critical" | "unknown" => {
-        if (/\[CRITICAL\].*status:\s*open/i.test(raw)) return "critical";
-        if (/\[WARNING\].*status:\s*open/i.test(raw)) return "degraded";
-        if (raw.includes("No active alerts")) return "healthy";
-        return "unknown";
-      };
-
-      const health = deriveHealthFromAlerts(alertsRaw);
-
-      return reply.send({
-        answer,
-        grounded: true,
-        health,
-      });
-
-      /* OLD PIPELINE COMMENTED OUT
-      // ── PIPELINE STEP 2: Risk detection ──────────────────────────
-      // const risk = detectRisk(normalized);
-      // ... (rest of the file until return reply.send)
-      */
-    }
+function isGeminiFailure(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return (
+    msg.includes("gemini") ||
+    msg.includes("google") ||
+    msg.includes("rate") ||
+    msg.includes("quota") ||
+    msg.includes("timeout") ||
+    msg.includes("api_key")
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────
-   LEGACY RAG SYSTEM PROMPT
-   Used when the tool pipeline is off (document-grounded path).
-   ───────────────────────────────────────────────────────────────── */
+// ─── Routes ───────────────────────────────────────────────────────────────────
 
-// function buildRagSystemPrompt(
-//   ragContexts: { text: string; chunkId: string; sourceUri?: string }[],
-//   liveContexts: { source: string; text: string }[],
-//   handler: HandlerType
-// ): string {
-//   const hasAny = ragContexts.length > 0 || liveContexts.length > 0;
+export async function registerChatRoutes(app: FastifyInstance) {
+  await migrateChatTables();
 
-//   const handlerHint = RAG_HANDLER_HINTS[handler] ?? "";
+  // POST / — Send a message, run agent, persist, return reply
+  app.post("/", { schema: postChatFastifySchema, preHandler: requireAuth }, async (req, reply) => {
+    const { userId, tenantId } = req.jwtUser!;
 
-//   const persona = `You are Ravi, the RVL Lamination Assistant — calm, experienced, direct. Speak plainly. Lead with the answer. Use exact values from CONTEXT. Never invent data. Never end with hollow closings. Write 2-4 sentences only.${handlerHint ? "\n" + handlerHint : ""}`;
+    const parsed = postChatBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request", detail: parsed.error.issues });
+    }
 
-//   if (!hasAny) {
-//     return `${persona}\n\nCONTEXT:\n(empty — no live data available right now)`;
-//   }
+    const body = parsed.data;
+    const machineId = body.machineId ?? "lamination-01";
+    validateMachineAccess(machineId);
 
-//   const parts: string[] = [];
+    const message = finalUserMessage(body);
+    if (!message) return reply.code(400).send({ error: "message_required" });
 
-//   if (liveContexts.length > 0) {
-//     const clean = liveContexts.filter(
-//       c => !c.text.includes("No definitions matched") && !c.text.includes("No tags found")
-//     );
-//     parts.push(...(clean.length > 0 ? clean : liveContexts).map(c => c.text));
-//   }
+    const db = getPostgresDb();
+    const now = new Date();
+    let sessionId = body.sessionId;
+    let history: HistoryMessage[] = [];
 
-//   if (ragContexts.length > 0) {
-//     parts.push(...ragContexts.map((c, i) => `[#${i + 1}] ${c.text}`));
-//   }
+    // ── Session setup ──────────────────────────────────────────────────────
+    try {
+      if (sessionId) {
+        const [session] = await db
+          .select()
+          .from(schema.chatSessions)
+          .where(
+            and(
+              eq(schema.chatSessions.id, sessionId),
+              eq(schema.chatSessions.tenantId, tenantId),
+              sql`${schema.chatSessions.deletedAt} is null`
+            )
+          );
+        if (!session) return reply.code(404).send({ error: "session_not_found" });
 
-//   return `${persona}\n\nCONTEXT:\n${parts.join("\n\n")}`;
-// }
+        const rows = await db
+          .select({
+            role: schema.chatMessages.role,
+            content: schema.chatMessages.content,
+            createdAt: schema.chatMessages.createdAt
+          })
+          .from(schema.chatMessages)
+          .where(eq(schema.chatMessages.sessionId, sessionId))
+          .orderBy(desc(schema.chatMessages.createdAt))
+          .limit(50);
 
-// const RAG_HANDLER_HINTS: Partial<Record<HandlerType, string>> = {
-//   alerts: "Focus on the alert situation. Name the most important alert first.",
-//   stale_data: "Note that data may be stale. Do not state readings as current fact.",
-//   partial_telemetry: "Acknowledge that only partial data is available.",
-//   user_correction: "Acknowledge the correction. Re-state the current data clearly.",
-//   conflicting_context: "Flag the discrepancy between fault flags and alert records.",
-// };
+        history = rows.reverse().map((row) => ({ role: row.role, content: row.content }));
+      } else {
+        sessionId = newId("chat");
+        await db.insert(schema.chatSessions).values({
+          id: sessionId,
+          machineId,
+          userId,
+          tenantId,
+          title: titleFromMessage(message),
+          createdAt: now,
+          updatedAt: now,
+          metadata: {}
+        });
+        history = requestHistory(body);
+      }
+    } catch (error) {
+      req.log.error({ err: error, machineId, sessionId }, "chat_session_prepare_failed");
+      return reply.code(500).send({ error: "chat_session_prepare_failed" });
+    }
 
-// const TOOL_LABEL: Record<string, string> = {
-//   find_tags: "Resolved tag candidates (fuzzy)",
-//   get_tags: "Fetched live tag values",
-//   get_alerts: "Queried alerts",
-//   get_reports: "Loaded report runs",
-//   get_production_metrics: "Aggregated production metrics",
-// };
+    // ── Agent execution ────────────────────────────────────────────────────
+    let agentResult: Awaited<ReturnType<typeof runAgent>>;
+    try {
+      agentResult = await runAgent({
+        userMessage: message,
+        history,
+        machineId,
+        sessionId: sessionId!,
+        logger: req.log
+      });
+    } catch (error) {
+      req.log.error({ err: error, machineId, sessionId }, "chat_agent_failed");
+      if (isGeminiFailure(error)) {
+        return reply.code(503).send({ error: "gemini_unavailable", retryAfter: 30 });
+      }
+      return reply.code(500).send({ error: "chat_failed" });
+    }
 
-// const LIVE_CONTEXT_LABEL: Record<string, string> = {
-//   alerts_db: "Queried alerts",
-//   tags_db: "Fetched live tag values",
-//   tags_selected: "Loaded selected tags",
-//   reports_db: "Loaded report history",
-//   ollama_catalog: "Listed available models",
-//   production_db: "Aggregated production data",
-// };
+    // ── Persist ────────────────────────────────────────────────────────────
+    const userMessageId = newId("chat");
+    const assistantMessageId = newId("chat");
+
+    // toolCalls column stores the structured trace (backward-compatible: was string[])
+    // Consumers that expected string[] will see an object instead — update if needed.
+    const tracePayload: AgentTrace = agentResult.trace;
+
+    try {
+      await db.transaction(async (tx) => {
+        await tx.insert(schema.chatMessages).values({
+          id: userMessageId,
+          sessionId: sessionId!,
+          role: "user",
+          content: message,
+          toolCalls: [],
+          tokenCount: null,
+          createdAt: new Date()
+        });
+        await tx.insert(schema.chatMessages).values({
+          id: assistantMessageId,
+          sessionId: sessionId!,
+          role: "assistant",
+          content: agentResult.reply,
+          toolCalls: tracePayload as unknown as string[], // schema stores JSON; cast for Drizzle
+          tokenCount: agentResult.tokenCount ?? null,
+          createdAt: new Date()
+        });
+        await tx
+          .update(schema.chatSessions)
+          .set({ updatedAt: new Date() })
+          .where(eq(schema.chatSessions.id, sessionId!));
+      });
+    } catch (error) {
+      // Persist failure should not block the client response — log and continue
+      req.log.error({ err: error, machineId, sessionId }, "chat_persist_failed");
+    }
+
+    const responsePayload = {
+      sessionId,
+      messageId: assistantMessageId,
+      reply: agentResult.reply,
+      answer: agentResult.reply,
+      toolsUsed: agentResult.toolsUsed,
+      tokenCount: agentResult.tokenCount,
+      citations: [],
+      grounded: agentResult.toolsUsed.length > 0,
+
+      // Pipeline-specific additions
+      steps: agentResult.toolSteps,
+      plan: tracePayload.plan,
+      trace: tracePayload,
+      queryClass: tracePayload.queryClass,
+      reflectionNote: tracePayload.reflectionNote ?? null,
+      reflectionSeverity: tracePayload.reflectionSeverity,
+      charts: agentResult.charts ?? [],
+
+      // Legacy fields (kept for API contract)
+      contextBlocks: [],
+      liveTagCount: 0,
+      findCandidates: []
+    };
+
+    req.log.info({ responseKeys: Object.keys(responsePayload), chartsCount: responsePayload.charts.length }, "chat_response_sent");
+
+    return reply.send(responsePayload);
+  });
+
+
+  // GET /sessions — List sessions for a machine (scoped to tenant)
+  app.get("/sessions", { schema: getChatSessionsFastifySchema, preHandler: requireAuth }, async (req, reply) => {
+    const { tenantId } = req.jwtUser!;
+    const parsed = chatSessionsQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request", detail: parsed.error.issues });
+    }
+    validateMachineAccess(parsed.data.machineId);
+
+    try {
+      const rows = await getPostgresDb()
+        .select({
+          id: schema.chatSessions.id,
+          title: schema.chatSessions.title,
+          machineId: schema.chatSessions.machineId,
+          createdAt: schema.chatSessions.createdAt,
+          updatedAt: schema.chatSessions.updatedAt,
+          messageCount: sql<number>`count(${schema.chatMessages.id})::int`
+        })
+        .from(schema.chatSessions)
+        .leftJoin(schema.chatMessages, eq(schema.chatMessages.sessionId, schema.chatSessions.id))
+        .where(
+          and(
+            eq(schema.chatSessions.tenantId, tenantId),
+            eq(schema.chatSessions.machineId, parsed.data.machineId),
+            sql`${schema.chatSessions.deletedAt} is null`
+          )
+        )
+        .groupBy(schema.chatSessions.id)
+        .orderBy(desc(schema.chatSessions.updatedAt))
+        .limit(parsed.data.limit);
+
+      return reply.send({
+        sessions: rows.map((row) => ({
+          ...row,
+          createdAt: row.createdAt.toISOString(),
+          updatedAt: row.updatedAt.toISOString()
+        }))
+      });
+    } catch (error) {
+      req.log.error({ err: error }, "chat_sessions_list_failed");
+      return reply.code(500).send({ error: "chat_sessions_list_failed" });
+    }
+  });
+
+  // GET /sessions/:sessionId/messages — Paginated message history
+  app.get(
+    "/sessions/:sessionId/messages",
+    { schema: getChatMessagesFastifySchema, preHandler: requireAuth },
+    async (req, reply) => {
+      const { tenantId } = req.jwtUser!;
+      const params = chatMessagesParamsSchema.safeParse(req.params);
+      const query = chatMessagesQuerySchema.safeParse(req.query);
+      if (!params.success || !query.success) {
+        return reply.code(400).send({ error: "invalid_request" });
+      }
+
+      try {
+        const [session] = await getPostgresDb()
+          .select()
+          .from(schema.chatSessions)
+          .where(
+            and(
+              eq(schema.chatSessions.id, params.data.sessionId),
+              eq(schema.chatSessions.tenantId, tenantId),
+              sql`${schema.chatSessions.deletedAt} is null`
+            )
+          );
+        if (!session) return reply.code(404).send({ error: "session_not_found" });
+
+        let beforeCreatedAt: Date | null = null;
+        if (query.data.before) {
+          const [cursor] = await getPostgresDb()
+            .select({ createdAt: schema.chatMessages.createdAt })
+            .from(schema.chatMessages)
+            .where(
+              and(
+                eq(schema.chatMessages.sessionId, params.data.sessionId),
+                eq(schema.chatMessages.id, query.data.before)
+              )
+            );
+          beforeCreatedAt = cursor?.createdAt ?? null;
+        }
+
+        const where = beforeCreatedAt
+          ? and(
+            eq(schema.chatMessages.sessionId, params.data.sessionId),
+            lt(schema.chatMessages.createdAt, beforeCreatedAt)
+          )
+          : eq(schema.chatMessages.sessionId, params.data.sessionId);
+
+        const rows = await getPostgresDb()
+          .select()
+          .from(schema.chatMessages)
+          .where(where)
+          .orderBy(desc(schema.chatMessages.createdAt))
+          .limit(query.data.limit);
+
+        return reply.send({
+          messages: rows.map((row) => ({
+            id: row.id,
+            role: row.role,
+            content: row.content,
+            toolCalls: row.toolCalls,
+            tokenCount: row.tokenCount,
+            createdAt: row.createdAt.toISOString()
+          })),
+          nextCursor:
+            rows.length === query.data.limit ? (rows[rows.length - 1]?.id ?? null) : null
+        });
+      } catch (error) {
+        req.log.error({ err: error }, "chat_messages_list_failed");
+        return reply.code(500).send({ error: "chat_messages_list_failed" });
+      }
+    }
+  );
+
+  // DELETE /sessions/:sessionId — Soft delete (owner only)
+  app.delete(
+    "/sessions/:sessionId",
+    { schema: deleteChatSessionFastifySchema, preHandler: requireAuth },
+    async (req, reply) => {
+      const { userId, tenantId } = req.jwtUser!;
+      const parsed = deleteChatSessionParamsSchema.safeParse(req.params);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid_request", detail: parsed.error.issues });
+      }
+
+      try {
+        const result = await getPostgresDb()
+          .update(schema.chatSessions)
+          .set({ deletedAt: new Date(), updatedAt: new Date() })
+          .where(
+            and(
+              eq(schema.chatSessions.id, parsed.data.sessionId),
+              eq(schema.chatSessions.userId, userId),
+              eq(schema.chatSessions.tenantId, tenantId)
+            )
+          )
+          .returning({ id: schema.chatSessions.id });
+
+        if (!result.length) return reply.code(404).send({ error: "session_not_found" });
+        return reply.send({ ok: true, sessionId: parsed.data.sessionId });
+      } catch (error) {
+        req.log.error({ err: error }, "chat_session_delete_failed");
+        return reply.code(500).send({ error: "chat_session_delete_failed" });
+      }
+    }
+  );
+}

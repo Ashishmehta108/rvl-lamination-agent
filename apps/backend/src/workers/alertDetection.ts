@@ -1,5 +1,6 @@
 import type PgBoss from "pg-boss";
 import type { BaseLogger } from "pino";
+import { and, eq, inArray } from "drizzle-orm";
 import { getMongoClient } from "@rvl/db-mongo";
 import { getPgDb, schema } from "@rvl/db-postgres";
 import { newId } from "@rvl/shared";
@@ -12,8 +13,59 @@ type TagUpdatedPayload = {
   ts: string;
 };
 
+type Trigger = { kind: "warn" | "alarm"; side: "high" | "low"; threshold: number };
+
+type AlertPayload = {
+  tagId?: string;
+  tagSlug?: string;
+  value?: number;
+  ts?: string;
+  threshold?: number;
+  kind?: "warn" | "alarm";
+  side?: "high" | "low";
+  resolution?: Record<string, unknown>;
+};
+
 function computeSeverity(kind: "warn" | "alarm") {
   return kind === "alarm" ? "critical" : "warning";
+}
+
+function breachDescription(
+  def: { name: string; slug: string; unit: string | null },
+  v: number,
+  primary: Trigger
+) {
+  return `${def.name} (${def.slug}): value ${v} ${def.unit ?? ""} exceeded ${primary.kind} ${primary.side} limit (threshold ${primary.threshold}). [rule:threshold_breach]`;
+}
+
+function buildClearReason(
+  tagName: string,
+  unit: string | null | undefined,
+  value: number,
+  clearedKind: "warn" | "alarm",
+  clearedSide: "high" | "low",
+  threshold: number
+): string {
+  const unitSuffix = unit ? ` ${unit}` : "";
+  if (clearedSide === "high") {
+    return `${tagName} returned below ${clearedKind} high limit (value ${value}${unitSuffix}, threshold ${threshold}${unitSuffix})`;
+  }
+  return `${tagName} returned above ${clearedKind} low limit (value ${value}${unitSuffix}, threshold ${threshold}${unitSuffix})`;
+}
+
+function clearedFromPayload(
+  payload: AlertPayload,
+  def: { warnHigh: number | null; warnLow: number | null; alarmHigh: number | null; alarmLow: number | null }
+) {
+  const clearedKind = payload.kind ?? "warn";
+  const clearedSide = payload.side ?? "high";
+  const threshold =
+    typeof payload.threshold === "number"
+      ? payload.threshold
+      : clearedSide === "high"
+        ? (clearedKind === "alarm" ? def.alarmHigh : def.warnHigh) ?? 0
+        : (clearedKind === "alarm" ? def.alarmLow : def.warnLow) ?? 0;
+  return { clearedKind, clearedSide, threshold };
 }
 
 export async function registerAlertDetectionWorker(boss: PgBoss, logger: BaseLogger) {
@@ -35,7 +87,8 @@ export async function registerAlertDetectionWorker(boss: PgBoss, logger: BaseLog
         if (!def || !latest) continue;
 
         const now = new Date(ts);
-        const triggers: Array<{ kind: "warn" | "alarm"; side: "high" | "low"; threshold: number }> = [];
+
+        const triggers: Trigger[] = [];
 
         // ── Handle Boolean Alarms (Binary Faults) ──
         if (def.dataType === "boolean") {
@@ -62,12 +115,98 @@ export async function registerAlertDetectionWorker(boss: PgBoss, logger: BaseLog
         }
 
 
-        if (triggers.length === 0) continue;
+        if (triggers.length === 0) {
+          const openAlerts = await db
+            .select({ alert: schema.alertEvents })
+            .from(schema.alertEvents)
+            .innerJoin(
+              schema.alertTags,
+              eq(schema.alertTags.alertEventId, schema.alertEvents.id)
+            )
+            .where(
+              and(
+                eq(schema.alertEvents.machineId, machineId),
+                eq(schema.alertTags.tagId, tagId),
+                inArray(schema.alertEvents.status, ["open", "acknowledged"])
+              )
+            );
+
+          if (!openAlerts.length) continue;
+
+          const resolvedIds: string[] = [];
+          for (const { alert } of openAlerts) {
+            const existingPayload = (alert.payload ?? {}) as AlertPayload;
+            const { clearedKind, clearedSide, threshold } = clearedFromPayload(existingPayload, def);
+            const reason = buildClearReason(def.name, def.unit, v, clearedKind, clearedSide, threshold);
+            const resolution = {
+              source: "threshold_clear",
+              actor: "system",
+              at: now.toISOString(),
+              tagSlug: def.slug,
+              value: v,
+              unit: def.unit ?? null,
+              clearedKind,
+              clearedSide,
+              threshold,
+              reason
+            };
+
+            await db
+              .update(schema.alertEvents)
+              .set({
+                status: "resolved",
+                endsAt: now,
+                dedupeKey: null,
+                payload: { ...existingPayload, resolution }
+              })
+              .where(eq(schema.alertEvents.id, alert.id));
+
+            resolvedIds.push(alert.id);
+          }
+
+          logger.info({ alertIds: resolvedIds, machineId, tagId }, "alerts auto-resolved");
+          continue;
+        }
 
         const primary = triggers.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "alarm" ? -1 : 1))[0]!;
         const v = latest.valueNumber ?? (latest.valueBoolean ? 1 : 0);
         const severity = computeSeverity(primary.kind);
         const dedupeKey = `${machineId}:${machineRevision}:${tagId}:${primary.kind}:${primary.side}`;
+        const breachPayload = {
+          tagId,
+          tagSlug: def.slug,
+          value: v,
+          ts: latest.ts.toISOString(),
+          threshold: primary.threshold,
+          kind: primary.kind,
+          side: primary.side
+        };
+        const description = breachDescription(def, v, primary);
+
+        const existing = await db
+          .select()
+          .from(schema.alertEvents)
+          .where(
+            and(
+              eq(schema.alertEvents.machineId, machineId),
+              eq(schema.alertEvents.dedupeKey, dedupeKey),
+              eq(schema.alertEvents.status, "open")
+            )
+          )
+          .limit(1);
+
+        if (existing.length > 0) {
+          const row = existing[0]!;
+          await db
+            .update(schema.alertEvents)
+            .set({
+              description,
+              payload: breachPayload
+            })
+            .where(eq(schema.alertEvents.id, row.id));
+          logger.debug({ alertId: row.id, machineId, tagId }, "alert updated (deduped)");
+          continue;
+        }
 
         try {
           const alertId = newId("alert");
@@ -88,18 +227,10 @@ export async function registerAlertDetectionWorker(boss: PgBoss, logger: BaseLog
               ruleId: null,
               severity,
               status: "open",
-              title: displayTitle,
-              description: displayDesc,
+              title: `${def.name} ${primary.kind.toUpperCase()} (${primary.side})`,
+              description,
               dedupeKey,
-              payload: {
-                tagId,
-                tagSlug: def.slug,
-                value: v,
-                ts: latest.ts.toISOString(),
-                threshold: primary.threshold,
-                kind: primary.kind,
-                side: primary.side
-              },
+              payload: breachPayload,
               startsAt: now
             });
 
@@ -141,5 +272,3 @@ export async function registerAlertDetectionWorker(boss: PgBoss, logger: BaseLog
     }
   );
 }
-
-

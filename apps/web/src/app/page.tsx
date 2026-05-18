@@ -7,8 +7,7 @@ import {
   ReferenceLine, Legend,
 } from "recharts";
 import Link from "next/link";
-import { Cpu, DocumentText } from "iconsax-reactjs";
-import { toast } from "sonner";
+import { Cpu, DocumentText, Clock } from "iconsax-reactjs";
 
 import AppHeader from "../components/AppHeader";
 import StatCard from "../components/dashboard/StatCard";
@@ -39,11 +38,23 @@ export default function HomePage() {
   const stats = useMemo(() => {
     const get = (slug: string) =>
       items.find(i => (i.slug || i.tagId) === slug);
+    const masterPct   = get("MASTER_SPEED_PCT")?.valueNumber ?? 0;
+    const maxSpeed    = get("MACHINE_MAX_LINE_SPEED")?.valueNumber ?? 0;
+    const actualMpm   = maxSpeed > 0 ? Math.round((masterPct / 100) * maxSpeed * 10) / 10 : null;
     return {
-      rpm: (get("EXTRUDER_RPM")?.valueNumber ?? 0).toFixed(1),
-      mpm: (get("LAMINATOR_MPM")?.valueNumber ?? 0).toFixed(1),
-      gsm: (get("GSM_ENTRY")?.valueNumber ?? 0).toFixed(1),
-      runM: (get("RUNNING_METER")?.valueNumber ?? 0).toFixed(0),
+      rpm:       (get("EXTRUDER_RPM")?.valueNumber  ?? 0).toFixed(1),
+      mpm:       (get("LAMINATOR_MPM")?.valueNumber ?? 0).toFixed(1),
+      gsm:       (get("GSM_ENTRY")?.valueNumber     ?? 0).toFixed(1),
+      runM:      (get("RUNNING_METER")?.valueNumber ?? 0).toFixed(0),
+      masterPct: masterPct.toFixed(0),
+      actualMpm,
+      hotplateOn:     get("HOTPLATE_ENABLE")?.valueBool ?? null,
+      hotplateClose:  get("HOTPLATE_CLOSE")?.valueBool ?? null,
+      sandwichOn:     get("SANDWICH_UW_ENABLE")?.valueBool ?? null,
+      gsmMode:        get("GSM_SELECTION")?.valueBool ?? null,
+      gramMode:       get("GRAM_LOGIC_SELECTION")?.valueBool ?? null,
+      logicEnabled:   get("LOGIC_ENABLE")?.valueBool ?? null,
+      airPressureLow: get("AIR_PRESSURE_LOW")?.valueBool ?? null,
     };
   }, [items]);
 
@@ -95,6 +106,9 @@ export default function HomePage() {
         icon={<Cpu size={14} color="var(--text-muted)" />}
         rightSlot={
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <Link href="/history" style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 5, color: "var(--text-muted)", textDecoration: "none", padding: "5px 10px", borderRadius: 6, border: "1px solid var(--border)" }}>
+              <Clock size={13} /> History
+            </Link>
             <div className="rvl-header-asset" style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 11, color: "var(--text-faint)", whiteSpace: "nowrap" }}>Asset</span>
               <input className="rvl-input" value={machineId}
@@ -123,6 +137,34 @@ export default function HomePage() {
             unit={alerts.some(a => a.severity === "critical") ? "Critical" : "Normal"}
             status={alerts.some(a => a.severity === "critical") ? "critical" : alerts.length > 0 ? "warning" : "good"}
           />
+        </div>
+
+        {/* ── Status badges ── */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+          {[
+            { label: "Logic",       on: stats.logicEnabled,   onText: "Enabled",   offText: "DISABLED", danger: stats.logicEnabled === false },
+            { label: "Hotplate",    on: stats.hotplateOn,     onText: "On",        offText: "Off" },
+            { label: "Hotplate Pos",on: stats.hotplateClose,  onText: "Closed",    offText: "Open" },
+            { label: "Sandwich UW", on: stats.sandwichOn,     onText: "Running",   offText: "Off" },
+            { label: "Air Pressure",on: stats.airPressureLow === false, onText: "OK", offText: "LOW ⚠", danger: stats.airPressureLow === true },
+            { label: "Mode",        on: null, onText: stats.gsmMode ? "GSM" : stats.gramMode ? "Gram" : "—", offText: "", alwaysShow: true },
+          ].map(b => b.on !== null || b.alwaysShow ? (
+            <span key={b.label} style={{
+              fontSize: 11, padding: "3px 10px", borderRadius: 20,
+              background: b.danger ? "color-mix(in srgb,#f87171 15%,transparent)" :
+                          b.on ? "color-mix(in srgb,#34d399 12%,transparent)" : "var(--surface-2)",
+              color: b.danger ? "#f87171" : b.on ? "#34d399" : "var(--text-muted)",
+              border: `1px solid ${b.danger ? "#f87171" : b.on ? "#34d399" : "var(--border)"}`,
+              fontWeight: 500,
+            }}>
+              {b.label}: {b.on === null ? b.onText : b.on ? b.onText : b.offText}
+            </span>
+          ) : null)}
+          {stats.actualMpm !== null && (
+            <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "var(--surface-2)", color: "var(--text-muted)", border: "1px solid var(--border)", fontWeight: 500 }}>
+              Speed: {stats.masterPct}% = {stats.actualMpm} m/min
+            </span>
+          )}
         </div>
 
         {/* ── Main grid: left charts | right sidebar ── */}
@@ -191,33 +233,64 @@ export default function HomePage() {
               </ChartCard>
             </div>
 
-            {/* Row 3: two medium charts */}
+            {/* Row 3: tension charts */}
             <div className="rvl-grid-2col">
 
-              <ChartCard title="Winder Tension" subtitle="% — amber line = 80% warn" onExport={() => triggerCsvExport(["WINDER_TENSION_PCT"])}>
+              <ChartCard title="Winder Tension" subtitle="% — amber=80% warn · red=5% low alarm">
                 <ResponsiveContainer width="100%" height={160}>
                   <AreaChart data={history} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
                     <XAxis dataKey="t" hide />
                     <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickLine={false} axisLine={false} />
                     <Tooltip content={<ChartTip units={{ WINDER_TENSION_PCT: "%" }} />} />
-                    <ReferenceLine y={80} stroke={C.amber} strokeDasharray="4 2" strokeWidth={1} label={{ value: "warn", position: "right", fontSize: 8, fill: C.amber }} />
+                    <ReferenceLine y={80} stroke={C.amber} strokeDasharray="4 2" strokeWidth={1} label={{ value: "warn hi", position: "right", fontSize: 8, fill: C.amber }} />
+                    <ReferenceLine y={5}  stroke={C.red}   strokeDasharray="4 2" strokeWidth={1} label={{ value: "alarm lo", position: "right", fontSize: 8, fill: C.red }} />
                     <Area type="monotone" dataKey="WINDER_TENSION_PCT" name="Tension %" stroke={C.purple} fill={C.purple} fillOpacity={0.1} strokeWidth={1.5} dot={false} isAnimationActive={false} />
                   </AreaChart>
                 </ResponsiveContainer>
               </ChartCard>
 
-              <ChartCard title="Unwinder Tension" subtitle="Set vs. PV · Newtons" onExport={() => triggerCsvExport(["UW_SET_TENSION", "UW_PV_TENSION"])}>
+              <ChartCard title="Unwinder Tension" subtitle="Set vs. PV · counts">
                 <ResponsiveContainer width="100%" height={160}>
                   <LineChart data={history} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
                     <XAxis dataKey="t" hide />
                     <YAxis tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickLine={false} axisLine={false} />
-                    <Tooltip content={<ChartTip units={{ UW_SET_TENSION: "N", UW_PV_TENSION: "N" }} />} />
+                    <Tooltip content={<ChartTip units={{ UW_SET_TENSION: "cts", UW_PV_TENSION: "cts" }} />} />
                     <Legend iconType="circle" iconSize={6} wrapperStyle={{ fontSize: 9, paddingTop: 4 }} />
                     <Line type="monotone" dataKey="UW_SET_TENSION" name="Set" stroke={C.green} strokeWidth={1.5} dot={false} isAnimationActive={false} strokeDasharray="5 3" />
                     <Line type="monotone" dataKey="UW_PV_TENSION" name="PV" stroke={C.accent} strokeWidth={1.5} dot={false} isAnimationActive={false} />
                   </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+            </div>
+
+            {/* Row 4: Sandwich UW tension */}
+            <div className="rvl-grid-2col">
+              <ChartCard title="Sandwich UW Tension" subtitle="Set vs. PV · counts (second film layer)">
+                <ResponsiveContainer width="100%" height={150}>
+                  <LineChart data={history} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                    <XAxis dataKey="t" hide />
+                    <YAxis tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTip units={{ SUW_SET_TENSION: "cts", SUW_PV_TENSION: "cts" }} />} />
+                    <Legend iconType="circle" iconSize={6} wrapperStyle={{ fontSize: 9, paddingTop: 4 }} />
+                    <Line type="monotone" dataKey="SUW_SET_TENSION" name="Set" stroke={C.blue}   strokeWidth={1.5} dot={false} isAnimationActive={false} strokeDasharray="5 3" />
+                    <Line type="monotone" dataKey="SUW_PV_TENSION"  name="PV"  stroke={C.green}  strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              <ChartCard title="Master Speed" subtitle="% setpoint over time">
+                <ResponsiveContainer width="100%" height={150}>
+                  <AreaChart data={history} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                    <XAxis dataKey="t" hide />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "var(--text-faint)" }} tickLine={false} axisLine={false} />
+                    <Tooltip content={<ChartTip units={{ MASTER_SPEED_PCT: "%" }} />} />
+                    <ReferenceLine y={95} stroke={C.amber} strokeDasharray="4 2" strokeWidth={1} />
+                    <Area type="monotone" dataKey="MASTER_SPEED_PCT" name="Speed %" stroke={C.blue} fill={C.blue} fillOpacity={0.1} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                  </AreaChart>
                 </ResponsiveContainer>
               </ChartCard>
             </div>

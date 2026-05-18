@@ -47,13 +47,21 @@ export function useDashboard(machineId: string) {
       const point: any = { t: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) };
       tagsData.items.forEach((item) => {
         if (typeof item.valueNumber === 'number') {
-          // Use slug if available for easier mapping in components, fallback to tagId
           const key = item.slug || item.tagId;
-          point[key] = item.valueNumber;
+          if (point[key] === undefined) {
+            point[key] = item.valueNumber;
+          }
+        }
+        // Capture boolean tags as 0/1 for status-over-time tracking
+        if (typeof item.valueBool === 'boolean') {
+          const key = item.slug || item.tagId;
+          if (point[key] === undefined) {
+            point[key] = item.valueBool ? 1 : 0;
+          }
         }
       });
 
-      const newHistory = [...historyRef.current, point].slice(-40);
+      const newHistory = [...historyRef.current, point].slice(-60);
       historyRef.current = newHistory;
       setHistory(newHistory);
     }

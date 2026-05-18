@@ -9,6 +9,7 @@ export interface ToolStep {
   tool: string;
   label: string;
   durationMs: number;
+  status?: "success" | "error" | "timeout" | "skipped";
 }
 
 export interface ContextBlock {
@@ -24,6 +25,16 @@ export interface FindCandidateChip {
   score: number;
 }
 
+export interface AgentChart {
+  type: "line" | "bar" | "area";
+  title: string;
+  series: {
+    name: string;
+    data: { x: string; y: number }[];
+  }[];
+  unit?: string;
+}
+
 export interface Message {
   role: Role;
   content: string;
@@ -35,6 +46,8 @@ export interface Message {
   liveTagCount?: number;
   /** Tag candidates from server-side find_tags (for UI chips). */
   findCandidates?: FindCandidateChip[];
+  /** Chart data for trends and history. */
+  charts?: AgentChart[];
 }
 
 export interface Conversation {
@@ -147,6 +160,7 @@ export function useChat() {
         contextBlocks?: ContextBlock[];
         liveTagCount?: number;
         findCandidates?: FindCandidateChip[];
+        charts?: AgentChart[];
       }>(`/chat`, body);
 
       const assistantMsg: Message = {
@@ -157,7 +171,8 @@ export function useChat() {
         grounded: data.grounded,
         contextBlocks: data.contextBlocks,
         liveTagCount: data.liveTagCount,
-        findCandidates: data.findCandidates
+        findCandidates: data.findCandidates,
+        charts: data.charts
       };
 
       setConversations(prev => prev.map(c => 
