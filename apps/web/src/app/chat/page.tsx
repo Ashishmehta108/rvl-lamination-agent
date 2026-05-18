@@ -238,7 +238,7 @@ export default function ChatPage() {
               <span style={{
                 flex: 1, fontSize: 13, fontWeight: 600,
                 color: "var(--text)",
-                textAlign: "left",         /* explicit: no centring on mobile */
+                textAlign: "left",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
@@ -248,7 +248,7 @@ export default function ChatPage() {
             </div>
           )}
 
-          {/* Scrollable messages — flex: 1 so it fills remaining space */}
+          {/* Scrollable messages */}
           <div
             ref={scrollAreaRef}
             className="rvl-noscroll"
@@ -265,11 +265,6 @@ export default function ChatPage() {
             ) : (
               <div style={{
                 maxWidth: 720, margin: "0 auto",
-                /*
-                  Desktop: 28px top, 32px bottom (input bar is a footer, not absolute).
-                  Mobile:  same — the input footer sits outside this scroll area so
-                           we only need a small bottom gap.
-                */
                 padding: isMobile ? "20px 16px 24px" : "28px 20px 32px",
                 display: "flex", flexDirection: "column", gap: 4,
               }}>
@@ -293,17 +288,14 @@ export default function ChatPage() {
 
           {/*
             ── INPUT FOOTER ──
-            Rendered as a normal flex child (flexShrink: 0) so it always sits at
-            the bottom of the column without needing position:absolute or a magic
-            bottom offset. Works on both desktop and mobile.
+            flex child (flexShrink: 0) — always anchored at bottom.
+            overflow: hidden clips the bar during its width expansion so it
+            never peeks outside the column bounds.
           */}
           <div style={{
             flexShrink: 0,
-
-
-
-            /* Soft fade so messages don't hard-clip at the bar */
-
+            padding: isMobile ? "10px 16px 14px" : "10px 20px 16px",
+            overflow: "hidden",          /* keeps expanding bar inside column */
           }}>
             <div style={{ maxWidth: 720, margin: "0 auto" }}>
               <ChatInput
@@ -396,7 +388,6 @@ function EmptyState({ onSend }: { onSend: (t: string) => void }) {
       display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: "center", minHeight: "75dvh",
       gap: 28, padding: "0 24px 32px",
-      /* text-align: center only for the hero block, chips stay centered via flex */
       animation: "rvl-fadein .32s cubic-bezier(.22,1,.36,1) both",
     }}>
       <div style={{ position: "relative" }}>
@@ -416,7 +407,6 @@ function EmptyState({ onSend }: { onSend: (t: string) => void }) {
         }} />
       </div>
 
-      {/* Title/subtitle — centred text is intentional here (hero block) */}
       <div style={{ maxWidth: 380, textAlign: "center" }}>
         <h2 style={{
           fontSize: 21, fontWeight: 700, letterSpacing: "-0.025em",
