@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const BACKEND_URL = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:7000";
-const API_TOKEN = "rvl-prod-secure-token-7a2b9f";
-// "dev-local-token";
+const API_TOKEN = process.env.NEXT_PUBLIC_API_AUTH_TOKEN || "dev-local-token";
+
 
 export async function GET(req: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const resolvedParams = await context.params;
@@ -35,6 +35,9 @@ async function handleRequest(req: NextRequest, pathSegments: string[]) {
 
   // Remove host header to avoid SSL/Routing issues
   headers.delete("host");
+
+  // Bypass ngrok browser warning page
+  headers.set("ngrok-skip-browser-warning", "true");
 
   try {
     const options: RequestInit = {
