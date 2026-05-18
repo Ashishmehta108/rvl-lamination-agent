@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const BACKEND_URL = process.env.BACKEND_URL || "http://127.0.0.1:7000";
+const BACKEND_URL = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:7000";
 const API_TOKEN = "rvl-prod-secure-token-7a2b9f";
 // "dev-local-token";
 
