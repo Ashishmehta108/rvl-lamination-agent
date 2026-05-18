@@ -49,6 +49,10 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "../../ecosystem.config.cjs",
+        "to": "ecosystem.config.cjs"
       }
     ],
     "win": {
