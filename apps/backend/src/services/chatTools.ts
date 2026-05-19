@@ -84,7 +84,9 @@ export async function toolGetTags(machineId: string, args: { tagIds?: string[]; 
     where: { machineId },
     select: { tagId: true, slug: true, name: true, unit: true }
   });
-  const defMap = new Map(defs.map((d) => [d.tagId, { slug: d.slug, name: d.name ?? d.slug, unit: d.unit ?? null }]));
+  const defMap = new Map<string, { slug: string; name: string; unit: string | null }>(
+    defs.map((d: any) => [d.tagId, { slug: d.slug, name: d.name ?? d.slug, unit: d.unit ?? null }])
+  );
 
   let rows;
   if (tagIds.length > 0) {

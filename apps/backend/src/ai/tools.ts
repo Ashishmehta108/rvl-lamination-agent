@@ -638,7 +638,7 @@ async function getTagHistory(args: ToolArgs, defaultMachineId: string) {
   // Collect numeric values in the same pass as building samples —
   // eliminates the second .map().filter() chain over the samples array.
   const numbers: number[] = [];
-  const samples = rows.map((row) => {
+  const samples = rows.map((row: any) => {
     const value = tagValue(row);
     if (typeof value === "number") numbers.push(value);
     return { ts: row.ts.toISOString(), value };
@@ -1284,13 +1284,13 @@ async function getTagComparison(args: ToolArgs, defaultMachineId: string) {
   // ── summary: what the agent reads ─────────────────────────────────────────
   const summary = defs.map((def, i) => {
     const rows = seriesData[i]!;
-    const samples = rows.map((row) => ({
+    const samples = rows.map((row: any) => ({
       ts: row.ts.toISOString(),
       value: tagValue(row),
     }));
     const numbers = samples
-      .map((s) => s.value)
-      .filter((v): v is number => typeof v === "number");
+      .map((s: any) => s.value)
+      .filter((v: any): v is number => typeof v === "number");
     const stats = summarizeNumbers(numbers);
     const trend = detectTrend(numbers);
     const anomalies = detectAnomalies(samples, def);
@@ -1321,7 +1321,7 @@ async function getTagComparison(args: ToolArgs, defaultMachineId: string) {
       slug: def.slug,
       name: def.name,
       unit: def.unit,
-      samples: rows.map((row) => ({
+      samples: rows.map((row: any) => ({
         ts: row.ts.toISOString(),
         value: tagValue(row),
       })),

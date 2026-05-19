@@ -1,12 +1,5 @@
 const path = require("path");
 
-// On Windows, npx is a .cmd file — must be invoked via cmd.exe
-const isWin = process.platform === "win32";
-const npxCmd = isWin ? "cmd" : "npx";
-const ngrokArgs = isWin
-  ? ["/c", "npx", "ngrok", "http", "7000"]
-  : ["ngrok", "http", "7000"];
-
 module.exports = {
   apps: [
     {
@@ -27,9 +20,8 @@ module.exports = {
     {
       name: "rvl-ngrok",
       cwd: __dirname,
-      script: npxCmd,
-      args: ngrokArgs,
-      interpreter: "none",
+      script: "ngrok-start.cjs",   // wrapper handles windowsHide
+      interpreter: "node",
       env: {
         NODE_ENV: "production"
       },

@@ -14,8 +14,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.15.18",
     "electron": "35.2.1",
@@ -53,6 +52,10 @@
       {
         "from": "../../ecosystem.config.cjs",
         "to": "ecosystem.config.cjs"
+      },
+      {
+        "from": "../../ngrok-start.cjs",
+        "to": "ngrok-start.cjs"
       }
     ],
     "win": {
@@ -65,4 +68,3 @@
     }
   }
 }
-

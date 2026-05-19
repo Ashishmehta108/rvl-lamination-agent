@@ -7,6 +7,20 @@
 # ────────────────────────────────────────────────────────────────────
 
 $ErrorActionPreference = "Stop"
+
+# 0. Check for Administrator privileges
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host "This script requires Administrator privileges to create scheduled tasks." -ForegroundColor Yellow
+    Write-Host "Restarting script with elevated privileges..." -ForegroundColor Yellow
+    try {
+        Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs -Wait
+    } catch {
+        Write-Host "ERROR: Script failed to elevate. Please run PowerShell as Administrator and run the script again." -ForegroundColor Red
+    }
+    exit
+}
+
 $projectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $ecosystemPath = Join-Path $projectRoot "ecosystem.config.cjs"
 
@@ -14,17 +28,27 @@ Write-Host "`n=== RVL PM2 Startup Setup ===" -ForegroundColor Cyan
 
 # 1. Check/install PM2 globally
 Write-Host "`n[1/4] Checking PM2..." -ForegroundColor Yellow
-$pm2Version = & pm2 --version 2>$null
+$pm2Version = $null
+try {
+    $pm2Version = & pm2 --version 2>$null
+} catch {
+    # PM2 not in PATH
+}
+
 if (-not $pm2Version) {
     Write-Host "  PM2 not found. Installing globally..." -ForegroundColor Yellow
     npm install -g pm2
-    $pm2Version = & pm2 --version 2>$null
+    try {
+        $pm2Version = & pm2 --version 2>$null
+    } catch {
+        # still not found
+    }
     if (-not $pm2Version) {
-        Write-Host "  ERROR: PM2 installation failed." -ForegroundColor Red
+        Write-Host "  ERROR: PM2 installation failed or still not in PATH." -ForegroundColor Red
         exit 1
     }
 }
-Write-Host "  PM2 v$pm2Version is available." -ForegroundColor Green
+Write-Host "  PM2 v$($pm2Version.Trim()) is available." -ForegroundColor Green
 
 # 2. Start services
 Write-Host "`n[2/4] Starting services via ecosystem.config.cjs..." -ForegroundColor Yellow
@@ -57,27 +81,51 @@ if (-not $pm2Bin) {
     # Remove existing task if any
     $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     if ($existing) {
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-        Write-Host "  Removed existing task '$taskName'." -ForegroundColor Yellow
+        try {
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+            Write-Host "  Removed existing task '$taskName'." -ForegroundColor Yellow
+        } catch {
+            Write-Host "  Could not remove existing task '$taskName' (non-admin)." -ForegroundColor Yellow
+        }
     }
 
-    $action = New-ScheduledTaskAction -Execute $pm2Bin -Argument "resurrect"
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-    $settings = New-ScheduledTaskSettingsSet `
-        -AllowStartIfOnBatteries `
-        -DontStopIfGoingOnBatteries `
-        -StartWhenAvailable `
-        -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+    $taskCreated = $false
+    try {
+        $action = New-ScheduledTaskAction -Execute $pm2Bin -Argument "resurrect"
+        $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+        $settings = New-ScheduledTaskSettingsSet `
+            -AllowStartIfOnBatteries `
+            -DontStopIfGoingOnBatteries `
+            -StartWhenAvailable `
+            -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 
-    Register-ScheduledTask `
-        -TaskName $taskName `
-        -Action $action `
-        -Trigger $trigger `
-        -Settings $settings `
-        -Description "Resurrect RVL Lamination PM2 services on login" `
-        -RunLevel Limited
+        Register-ScheduledTask `
+            -TaskName $taskName `
+            -Action $action `
+            -Trigger $trigger `
+            -Settings $settings `
+            -Description "Resurrect RVL Lamination PM2 services on login" `
+            -RunLevel Limited
+        $taskCreated = $true
+        Write-Host "  Scheduled task '$taskName' created — PM2 will auto-resurrect on login." -ForegroundColor Green
+    } catch {
+        Write-Host "  Could not create Scheduled Task (requires Admin). Falling back to Startup folder shortcut..." -ForegroundColor Yellow
+    }
 
-    Write-Host "  Scheduled task '$taskName' created — PM2 will auto-resurrect on login." -ForegroundColor Green
+    # 4.2 Robust Startup folder fallback (Works even without Admin rights and on all Windows editions)
+    $startupFolder = [System.IO.Path]::Combine($env:APPDATA, 'Microsoft\Windows\Start Menu\Programs\Startup')
+    $shortcutPath = [System.IO.Path]::Combine($startupFolder, 'RVL-PM2-Resurrect.lnk')
+    try {
+        $WshShell = New-Object -ComObject WScript.Shell
+        $Shortcut = $WshShell.CreateShortcut($shortcutPath)
+        $Shortcut.TargetPath = $pm2Bin
+        $Shortcut.Arguments = "resurrect"
+        $Shortcut.WindowStyle = 7 # Minimized / No Window popup
+        $Shortcut.Save()
+        Write-Host "  Startup Shortcut successfully created in Windows Startup Folder." -ForegroundColor Green
+    } catch {
+        Write-Host "  WARNING: Could not create Startup Shortcut." -ForegroundColor Red
+    }
 }
 
 # Summary

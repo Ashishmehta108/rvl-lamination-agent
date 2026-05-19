@@ -167,12 +167,12 @@ export async function registerQueryRoutes(app: FastifyInstance) {
       select: { tagId: true, slug: true, name: true }
     });
 
-    const defMap = new Map(definitions.map(d => [d.tagId, d]));
+    const defMap = new Map(definitions.map((d: any) => [d.tagId, d]));
 
-    const enhancedItems = items.map(item => ({
+    const enhancedItems = items.map((item: any) => ({
       ...item,
-      slug: defMap.get(item.tagId)?.slug || item.tagId,
-      name: defMap.get(item.tagId)?.name || item.tagId,
+      slug: (defMap.get(item.tagId) as any)?.slug || item.tagId,
+      name: (defMap.get(item.tagId) as any)?.name || item.tagId,
     }));
 
     return reply.send({ items: enhancedItems });

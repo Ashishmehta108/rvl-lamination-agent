@@ -126,7 +126,7 @@ async function main(): Promise<void> {
       alarmLow: true
     }
   });
-  const defByTagId = new Map(definitions.map((def) => [def.tagId, def]));
+  const defByTagId = new Map<string, any>(definitions.map((def: any) => [def.tagId, def]));
   const samples = await prisma.tagSample.findMany({
     where: {
       machineId,
@@ -185,7 +185,7 @@ async function main(): Promise<void> {
   }
 
   console.log("\nExact range rows via Drizzle:");
-  console.log(JSON.stringify(exactRows.map((row) => ({
+  console.log(JSON.stringify(exactRows.map((row: any) => ({
     ...row,
     startsAt: row.startsAt.toISOString(),
     endsAt: row.endsAt?.toISOString() ?? null
@@ -195,7 +195,7 @@ async function main(): Promise<void> {
   console.log(JSON.stringify((rawDateRows as { rows?: unknown[] }).rows ?? [], null, 2));
 
   console.log("\nNearby alerts +/- 2 days:");
-  console.log(JSON.stringify(nearbyRows.map((row) => ({
+  console.log(JSON.stringify(nearbyRows.map((row: any) => ({
     ...row,
     startsAt: row.startsAt.toISOString()
   })), null, 2));
@@ -204,14 +204,14 @@ async function main(): Promise<void> {
   console.log(JSON.stringify((totalByMachine as { rows?: unknown[] }).rows ?? [], null, 2));
 
   console.log("\nLatest 20 alerts in this Postgres database, any machine:");
-  console.log(JSON.stringify(latestAnyMachine.map((row) => ({
+  console.log(JSON.stringify(latestAnyMachine.map((row: any) => ({
     ...row,
     startsAt: row.startsAt.toISOString(),
     createdAt: row.createdAt.toISOString()
   })), null, 2));
 
   console.log("\nDerived threshold breaches from Mongo TagSample for requested day:");
-  console.log(JSON.stringify([...derived.values()].map((row) => ({
+  console.log(JSON.stringify([...derived.values()].map((row: any) => ({
     ...row,
     firstAt: row.firstAt.toISOString(),
     lastAt: row.lastAt.toISOString()
