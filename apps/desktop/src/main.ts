@@ -1,5 +1,5 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage, dialog } from "electron";
-import { execSync, exec } from "child_process";
+import { spawn, execSync } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 import http from "http";
@@ -12,12 +12,10 @@ let tray: Tray | null = null;
 let isQuitting = false;
 
 const isDev = !app.isPackaged;
-const FRONTEND_PORT = 3000;
-// In dev: loads localhost:3000 (Next.js dev server)
-// In production (packaged app): loads VERCEL_URL env var (set at build time or via .env)
-const VERCEL_URL = process.env.VERCEL_FRONTEND_URL ?? "";
+// Always load the Vercel production URL — no local dev server needed
 const FRONTEND_URL = process.env.ELECTRON_START_URL
-  ?? (isDev ? `http://localhost:${FRONTEND_PORT}` : VERCEL_URL || `http://localhost:${FRONTEND_PORT}`);
+  ?? process.env.VERCEL_FRONTEND_URL
+  ?? "https://rvl-lamination-agent-web.vercel.app";
 
 
 const ECOSYSTEM_PATH = isDev
@@ -41,12 +39,19 @@ function runShell(cmd: string): string {
 
 /**
  * Run a shell command asynchronously with a Promise.
+ * Uses spawn with windowsHide:true so no CMD console window appears on Windows.
  */
 function runShellAsync(cmd: string): Promise<string> {
   return new Promise((resolve) => {
-    exec(cmd, { encoding: "utf-8", windowsHide: true, timeout: 30000 }, (err, stdout) => {
-      resolve(err ? "" : (stdout || "").trim());
+    const child = spawn(cmd, [], {
+      shell: true,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
     });
+    let stdout = "";
+    child.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
+    child.on("close", () => resolve(stdout.trim()));
+    child.on("error", () => resolve(""));
   });
 }
 
@@ -107,7 +112,7 @@ async function startServices(): Promise<void> {
  */
 async function stopServices(): Promise<void> {
   console.log("[Desktop] Stopping PM2 services...");
-  await runShellAsync("pm2 stop rvl-backend rvl-ngrok rvl-localtunnel");
+  await runShellAsync("pm2 stop rvl-backend rvl-ngrok");
   console.log("[Desktop] PM2 services stopped.");
 }
 
@@ -155,7 +160,12 @@ function createTray() {
     {
       label: "View Logs",
       click: () => {
-        exec("pm2 logs --lines 50", { windowsHide: false });
+        // Open a real visible terminal for log viewing
+        spawn("cmd", ["/c", "start", "cmd", "/k", "pm2 logs --lines 100"], {
+          shell: false,
+          detached: true,
+          stdio: "ignore",
+        }).unref();
       }
     },
     {
@@ -237,20 +247,9 @@ function createWindow() {
 }
 
 async function loadFrontend() {
-  // Production with Vercel: load directly (no local port to wait for)
-  if (!isDev && VERCEL_URL) {
-    mainWindow?.loadURL(FRONTEND_URL);
-    mainWindow?.setTitle("RVL Lamination AI Agent");
-    return;
-  }
-  // Dev mode: wait for Next.js dev server on localhost
-  try {
-    await waitForPort(FRONTEND_PORT, 90000);
-    mainWindow?.loadURL(FRONTEND_URL);
-    mainWindow?.setTitle("RVL Lamination AI Agent");
-  } catch {
-    mainWindow?.loadURL("data:text/html,<html style='background:#0b0f14;display:flex;align-items:center;justify-content:center;height:100vh;margin:0'><p style='color:#fc8181;font-family:sans-serif;font-size:18px'>Failed to connect to web server. Check PM2 logs.</p></html>");
-  }
+  // Always load the Vercel production URL directly — no port polling needed
+  mainWindow?.loadURL(FRONTEND_URL);
+  mainWindow?.setTitle("RVL Lamination AI Agent");
 }
 
 
