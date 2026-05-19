@@ -15,6 +15,7 @@
  */
 
 import Fuse from "fuse.js";
+import type { IFuseOptions } from "fuse.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -151,7 +152,7 @@ const INTENT_VOCABULARY: IntentVocab[] = [
  * Fuse score is inverted: 0.0 = perfect match, 1.0 = no match.
  * We convert to a 0–1 confidence where 1.0 = best.
  */
-const FUSE_OPTIONS: Fuse.IFuseOptions<{ phrase: string; intent: string }> = {
+const FUSE_OPTIONS: IFuseOptions<{ phrase: string; intent: string }> = {
   keys: ["phrase"],
   threshold: 0.35,          // lower = stricter. 0.35 catches typos without false positives
   distance: 80,             // how far from start of string to look for match
@@ -245,7 +246,7 @@ function scoreFuzzyIntents(
     const intent = result.item.intent;
     // Fuse score: 0=perfect, 1=no match → invert to confidence
     const confidence = 1 - (result.score ?? 1);
-    if (confidence > scores[intent]) {
+    if (confidence > (scores[intent] ?? 0)) {
       scores[intent] = confidence;
     }
   }
@@ -260,7 +261,7 @@ function scoreFuzzyIntents(
       // Token matches get a slight penalty (0.9x) vs full-query matches
       // WHY: a single token is weaker signal than a full phrase match
       const adjustedConfidence = confidence * 0.9;
-      if (adjustedConfidence > scores[intent]) {
+      if (adjustedConfidence > (scores[intent] ?? 0)) {
         scores[intent] = adjustedConfidence;
       }
     }
@@ -341,20 +342,20 @@ export function detectIntent(
   // ── Layer 3: Rule-Based Fallback Hits (domain-specific only) ────────────
 
   const ruleHits: Record<string, boolean> = {
-    alerts:     RULE_PATTERNS.alerts.test(q),
-    tags:       RULE_PATTERNS.tags.test(q),
-    status:     RULE_PATTERNS.status.test(q),
-    production: RULE_PATTERNS.production.test(q),
-    reports:    RULE_PATTERNS.reports.test(q),
+    alerts:     RULE_PATTERNS["alerts"]!.test(q),
+    tags:       RULE_PATTERNS["tags"]!.test(q),
+    status:     RULE_PATTERNS["status"]!.test(q),
+    production: RULE_PATTERNS["production"]!.test(q),
+    reports:    RULE_PATTERNS["reports"]!.test(q),
   };
 
   // ── Layer 4: Arbitration per Intent ─────────────────────────────────────
 
-  const alertsArb     = arbitrate("alerts",     fuzzyScores.alerts,     ruleHits.alerts);
-  const tagsArb       = arbitrate("tags",        fuzzyScores.tags,       ruleHits.tags);
-  const statusArb     = arbitrate("status",      fuzzyScores.status,     ruleHits.status);
-  const productionArb = arbitrate("production",  fuzzyScores.production, ruleHits.production);
-  const reportsArb    = arbitrate("reports",     fuzzyScores.reports,    ruleHits.reports);
+  const alertsArb     = arbitrate("alerts",     fuzzyScores["alerts"]!,     ruleHits["alerts"]!);
+  const tagsArb       = arbitrate("tags",        fuzzyScores["tags"]!,       ruleHits["tags"]!);
+  const statusArb     = arbitrate("status",      fuzzyScores["status"]!,     ruleHits["status"]!);
+  const productionArb = arbitrate("production",  fuzzyScores["production"]!, ruleHits["production"]!);
+  const reportsArb    = arbitrate("reports",     fuzzyScores["reports"]!,    ruleHits["reports"]!);
 
   const wantsAlerts     = alertsArb.result;
   const wantsTags       = tagsArb.result;
@@ -412,11 +413,11 @@ export function detectIntent(
     ? {
         fuzzyScores,
         fuzzyHits: {
-          alerts:     fuzzyScores.alerts     >= WEAK_FUZZY_THRESHOLD,
-          tags:       fuzzyScores.tags       >= WEAK_FUZZY_THRESHOLD,
-          status:     fuzzyScores.status     >= WEAK_FUZZY_THRESHOLD,
-          production: fuzzyScores.production >= WEAK_FUZZY_THRESHOLD,
-          reports:    fuzzyScores.reports    >= WEAK_FUZZY_THRESHOLD,
+          alerts:     fuzzyScores["alerts"]!     >= WEAK_FUZZY_THRESHOLD,
+          tags:       fuzzyScores["tags"]!       >= WEAK_FUZZY_THRESHOLD,
+          status:     fuzzyScores["status"]!     >= WEAK_FUZZY_THRESHOLD,
+          production: fuzzyScores["production"]! >= WEAK_FUZZY_THRESHOLD,
+          reports:    fuzzyScores["reports"]!    >= WEAK_FUZZY_THRESHOLD,
         },
         ruleHits,
         finalDecisions: {

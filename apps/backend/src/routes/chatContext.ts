@@ -1,7 +1,7 @@
 import { getMongoClient } from "@rvl/db-mongo";
 import { getPgDb, schema } from "@rvl/db-postgres";
 import { desc, eq, and, gte } from "drizzle-orm";
-import { getCachedOllamaModelNames } from "../llm/ollama.js";
+import { config } from "../config.js";
 
 /* ────────────────────────────────────────────────────────────────
    Live data fetcher for chat context injection.
@@ -58,17 +58,24 @@ function matchesAny(text: string, keywords: string[]): boolean {
 }              
 
 async function fetchOllamaCatalogContext(): Promise<LiveContext | null> {
-  const names = await getCachedOllamaModelNames();
-  if (names.length === 0) {
+  try {
+    const res = await fetch(`${config.ollamaBaseUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) throw new Error("not ok");
+    const data = await res.json() as { models?: { name: string }[] };
+    const names = (data.models ?? []).map((m: { name: string }) => m.name);
+    if (names.length === 0) {
+      return { source: "ollama_catalog", text: "OLLAMA: No models installed." };
+    }
+    return {
+      source: "ollama_catalog",
+      text: `OLLAMA (local inference server): installed model names:\n${names.map((n: string) => `- ${n}`).join("\n")}`
+    };
+  } catch {
     return {
       source: "ollama_catalog",
       text: "OLLAMA: Model list unavailable (Ollama not reachable or returned no models). Do not invent model names."
     };
   }
-  return {
-    source: "ollama_catalog",
-    text: `OLLAMA (local inference server): installed model names (for configuration questions only, not machine readings):\n${names.map((n) => `- ${n}`).join("\n")}`
-  };
 }          
  
 export async function fetchLiveContext(

@@ -92,7 +92,7 @@ export async function registerAlertDetectionWorker(boss: PgBoss, logger: BaseLog
 
         // ── Handle Boolean Alarms (Binary Faults) ──
         if (def.dataType === "boolean") {
-          const isFault = latest.valueNumber === 1 || latest.valueBoolean === true;
+          const isFault = latest.valueNumber === 1 || latest.valueBool === true;
           if (isFault) {
             triggers.push({ kind: "alarm", side: "high", threshold: 1 });
           }
@@ -136,6 +136,7 @@ export async function registerAlertDetectionWorker(boss: PgBoss, logger: BaseLog
           const resolvedIds: string[] = [];
           for (const { alert } of openAlerts) {
             const existingPayload = (alert.payload ?? {}) as AlertPayload;
+          const v = latest.valueNumber ?? (latest.valueBool ? 1 : 0);
             const { clearedKind, clearedSide, threshold } = clearedFromPayload(existingPayload, def);
             const reason = buildClearReason(def.name, def.unit, v, clearedKind, clearedSide, threshold);
             const resolution = {
@@ -169,7 +170,7 @@ export async function registerAlertDetectionWorker(boss: PgBoss, logger: BaseLog
         }
 
         const primary = triggers.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "alarm" ? -1 : 1))[0]!;
-        const v = latest.valueNumber ?? (latest.valueBoolean ? 1 : 0);
+        const v = latest.valueNumber ?? (latest.valueBool ? 1 : 0);
         const severity = computeSeverity(primary.kind);
         const dedupeKey = `${machineId}:${machineRevision}:${tagId}:${primary.kind}:${primary.side}`;
         const breachPayload = {

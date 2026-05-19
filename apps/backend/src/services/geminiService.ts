@@ -1,8 +1,8 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { config } from "../config.js";
 
-const genAI = new GoogleGenerativeAI(config.googleApiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+const genAI = new GoogleGenerativeAI(config.geminiApiKey);
+const model = genAI.getGenerativeModel({ model: config.geminiModel });
 
 export interface LLMContextData {
   alerts: string;
@@ -87,7 +87,7 @@ RULES:
 - Do NOT explain reasoning.
 `;
 export async function callGemini(query: string, context: string): Promise<string> {
-  if (!config.googleApiKey) {
+  if (!config.geminiApiKey) {
     return "Gemini API key is not configured.";
   }
 

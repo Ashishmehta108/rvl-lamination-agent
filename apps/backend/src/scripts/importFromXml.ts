@@ -13,7 +13,7 @@ const OUTPUT_PATH = path.join(process.cwd(), "tag_definitions.json");
 
 function getTagValue(xml: string, tagName: string): string {
   const match = xml.match(new RegExp(`<${tagName}>([^<]*)</${tagName}>`));
-  return match ? match[1].trim() : "";
+  return match ? match[1]!.trim() : "";
 }
 
 /**
@@ -70,8 +70,8 @@ async function convert() {
 
       const scalingMatch = block.match(/<scaling>([\s\S]*?)<\/scaling>/);
       const scalingBlock = scalingMatch ? scalingMatch[1] : "";
-      const min = Number(getTagValue(scalingBlock, "eumin")) || 0;
-      const max = Number(getTagValue(scalingBlock, "eumax")) || 0;
+      const min = Number(getTagValue(scalingBlock!, "eumin")) || 0;
+      const max = Number(getTagValue(scalingBlock!, "eumax")) || 0;
 
       // ── Threshold Calculation ──
       let warnHigh: number | undefined;
@@ -91,7 +91,7 @@ async function convert() {
           alarmHigh = override.alarm;
         } else {
           const ruleKey = Object.keys(TAG_RULES).find(key => name.includes(key)) || "DEFAULT";
-          const rule = TAG_RULES[ruleKey];
+          const rule = TAG_RULES[ruleKey]!;
           warnHigh = Number((max * rule.warn).toFixed(2));
           alarmHigh = Number((max * rule.alarm).toFixed(2));
         }
