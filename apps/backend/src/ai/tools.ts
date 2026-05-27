@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from "fastify";
 import { and, count, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { newId } from "@rvl/shared";
-import { getPrismaClient } from "../db/mongo.js";
+import { getPrismaClient, getNativeDb } from "../db/mongo.js";
 import { getPostgresDb, schema } from "../db/postgres.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -967,9 +967,20 @@ async function getProductionSummary(args: ToolArgs, defaultMachineId: string) {
         eq(schema.alertEvents.status, "open"),
       ),
     );
+  // Fetch today's production from the exact same MongoDB collection used by the production page
+  const nativeDb = await getNativeDb();
+  const today = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const productionToday = await nativeDb.collection<any>("ProductionDaily").findOne({
+    _id: `${machineId}:${today}`
+  });
+  const todayProductionMeters =
+    productionToday && typeof productionToday.meters === "number" && Number.isFinite(productionToday.meters)
+      ? Math.round(productionToday.meters)
+      : 0;
   return {
     runningMeter: val("RUNNING_METER"),
     totalMeter: val("TOTAL_METER"),
+    todayProductionMeters,
     gsm: val("GSM_ENTRY"),
     gramEntry: val("GRAM_ENTRY"),
     laminatorMpm,

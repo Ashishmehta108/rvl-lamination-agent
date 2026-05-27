@@ -104,7 +104,7 @@ export default function ProductionPage() {
             granularity,
             buckets,
           }),
-    { refreshInterval: 60000 }
+    { revalidateOnFocus: false }
   );
 
   const applyRange = useCallback(() => {
@@ -156,6 +156,7 @@ export default function ProductionPage() {
       samples: b.sampleCount,
     }));
   }, [data]);
+  const totalMeters = useMemo(() => chartData.reduce((sum, bucket) => sum + bucket.meters, 0), [chartData]);
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg)", color: "var(--text)" }}>
@@ -229,7 +230,7 @@ export default function ProductionPage() {
 
         {data && (
           <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
-            Window: {new Date(data.from).toLocaleString()} — {new Date(data.to).toLocaleString()}
+            Window: {new Date(data.from).toLocaleString()} — {new Date(data.to).toLocaleString()} · Total produced: {Math.round(totalMeters * 10) / 10} m
           </p>
         )}
 
@@ -246,7 +247,7 @@ export default function ProductionPage() {
 
         {chartData.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-            <ChartCard title="Running meters produced" subtitle="Per bucket (RUNNING_METER max − min)">
+            <ChartCard title="Running meters produced" subtitle="Per bucket, reset-aware RUNNING_METER deltas">
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={chartData} margin={{ top: 8, right: 12, left: 4, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />

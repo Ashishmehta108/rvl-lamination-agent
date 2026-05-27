@@ -8,6 +8,12 @@ import { mlCollectAndPredict } from "./mlService.js";
 
 type CleanQuality = "good" | "bad";
 
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+function istDayKey(date: Date): string {
+  return new Date(date.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
 type Def = {
   tagId: string;
   slug: string;
@@ -24,21 +30,11 @@ type Def = {
   alarmLow?: number | null;
 };
 
-const defsCache = new Map<
-  string,
-  { expiresAt: number; defsByTagId: Map<string, Def>; defsBySlug: Map<string, Def> }
->();
-
 async function getDefsForProfile(args: {
   tagDefinitions: any;
   machineId: string;
   machineRevision: string;
-  nowMs: number;
 }): Promise<{ defsByTagId: Map<string, Def>; defsBySlug: Map<string, Def> }> {
-  const key = `${args.machineId}:${args.machineRevision}`;
-  const cached = defsCache.get(key);
-  if (cached && cached.expiresAt > args.nowMs) return cached;
-
   const defs = (await args.tagDefinitions
     .find({ machineId: args.machineId, machineRevision: args.machineRevision })
     .toArray()) as Def[];
@@ -62,9 +58,7 @@ async function getDefsForProfile(args: {
       defsBySlug.set(d.slug, d);
     }
   }
-  const next = { expiresAt: args.nowMs + 30_000, defsByTagId, defsBySlug };
-  defsCache.set(key, next);
-  return next;
+  return { defsByTagId, defsBySlug };
 }
 
 function coerceValue(input: unknown, dataType: string): { ok: boolean; value: any; reason?: string } {
@@ -153,6 +147,7 @@ export async function cleanAndPersistBatch(batch: IngestBatch, logger: any): Pro
   const tagDefinitions = db.collection<any>("TagDefinition");
   const tagLatests = db.collection<any>("TagLatest");
   const tagSamples = db.collection<any>("TagSample");
+  const productionDaily = db.collection<any>("ProductionDaily");
 
   const profileId = `${batch.machineId}:${batch.machineRevision}`;
   await machineProfiles.updateOne(
@@ -238,12 +233,10 @@ export async function cleanAndPersistBatch(batch: IngestBatch, logger: any): Pro
     }
   }
 
-  const nowMs = Date.now();
   const { defsByTagId, defsBySlug } = await getDefsForProfile({
     tagDefinitions,
     machineId: batch.machineId,
-    machineRevision: batch.machineRevision,
-    nowMs
+    machineRevision: batch.machineRevision
   });
 
   // Preload latest values for all tags in this batch to avoid per-tag RTT
@@ -253,28 +246,42 @@ export async function cleanAndPersistBatch(batch: IngestBatch, logger: any): Pro
 
   const latestOps: any[] = [];
   const sampleDocs: any[] = [];
+  const productionDailyOps: any[] = [];
 
   for (const t of batch.tags) {
     try {
       const ts = t.ts ?? batch.sentAt;
       const def = t.tagId ? defsByTagId.get(t.tagId) : t.tagSlug ? defsBySlug.get(t.tagSlug) : undefined;
 
-      let tagId = def?.tagId ?? t.tagId ?? newId("tag");
+      let tagId = def?.tagId ?? t.tagId ?? t.tagSlug ?? newId("tag");
       let tagSlug = def?.slug ?? t.tagSlug ?? tagId;
       let dataType = def?.dataType ?? "number";
 
       if (!def) {
+        const createdAt = new Date();
+        const defId = `${batch.machineId}:${batch.machineRevision}:${tagId}`;
+        const defDoc = {
+          machineId: batch.machineId,
+          machineRevision: batch.machineRevision,
+          tagId,
+          slug: tagSlug,
+          name: tagSlug,
+          dataType,
+          updatedAt: createdAt
+        };
+
         await tags.updateOne(
           { _id: tagId },
-          { $set: { slug: tagSlug, name: tagSlug, aliases: [], updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+          { $set: { slug: tagSlug, name: tagSlug, aliases: [], updatedAt: createdAt }, $setOnInsert: { createdAt } },
           { upsert: true }
         );
-        const defId = `${batch.machineId}:${batch.machineRevision}:${tagId}`;
         await tagDefinitions.updateOne(
           { _id: defId },
-          { $set: { machineId: batch.machineId, machineRevision: batch.machineRevision, tagId, slug: tagSlug, name: tagSlug, dataType, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+          { $set: defDoc, $setOnInsert: { createdAt } },
           { upsert: true }
         );
+        defsByTagId.set(tagId, defDoc);
+        defsBySlug.set(tagSlug, defDoc);
       } else {
         tagId = def.tagId;
         tagSlug = def.slug;
@@ -296,6 +303,28 @@ export async function cleanAndPersistBatch(batch: IngestBatch, logger: any): Pro
         const dtSec = prevLatest?.ts && ts ? Math.max(0, (ts.getTime() - prevLatest.ts.getTime()) / 1000) : null;
         const checked = numericQualityChecks({ value: coerced.value, prevValue, dtSec, min: def?.min ?? null, max: def?.max ?? null, maxRatePerSec: def?.maxRatePerSec ?? null });
         quality = checked.quality; reasons.push(...checked.reasons);
+
+        if ((tagSlug === "RUNNING_METER" || tagId === "RUNNING_METER") && prevValue !== null) {
+          const delta = coerced.value >= prevValue ? coerced.value - prevValue : Math.max(0, coerced.value);
+          if (delta > 0 && Number.isFinite(delta)) {
+            const day = istDayKey(ts);
+            productionDailyOps.push({
+              updateOne: {
+                filter: { _id: `${batch.machineId}:${day}` },
+                update: {
+                  $set: {
+                    machineId: batch.machineId,
+                    day,
+                    updatedAt: new Date()
+                  },
+                  $inc: { meters: delta },
+                  $setOnInsert: { createdAt: new Date() }
+                },
+                upsert: true
+              }
+            });
+          }
+        }
 
         if (def?.deadband !== null && def?.deadband !== undefined && prevValue !== null) {
           if (Math.abs(coerced.value - prevValue) <= def.deadband) {
@@ -357,6 +386,9 @@ export async function cleanAndPersistBatch(batch: IngestBatch, logger: any): Pro
   }
   if (latestOps.length) {
     await tagLatests.bulkWrite(latestOps, { ordered: false });
+  }
+  if (productionDailyOps.length) {
+    await productionDaily.bulkWrite(productionDailyOps, { ordered: false });
   }
 
   logger.debug({ accepted, rejected, machineId: batch.machineId }, "ingest batch processed");

@@ -1,10 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { jwtVerify } from "jose";
-
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET ?? "dev-jwt-secret-change-in-production"
-);
-
+import { decodeJwt } from "jose";
 /** Routes that are always public (no auth check). */
 const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/auth/logout", "/_next", "/favicon.ico"];
 
@@ -26,7 +21,10 @@ export async function middleware(req: NextRequest) {
   }
 
   try {
-    const { payload } = await jwtVerify(token, JWT_SECRET);
+    const payload = decodeJwt(token);
+    if (typeof payload.exp === "number" && payload.exp * 1000 < Date.now()) {
+      throw new Error("Token expired");
+    }
     const { userId, tenantId, role } = payload as {
       userId: string;
       tenantId: string;
@@ -42,7 +40,8 @@ export async function middleware(req: NextRequest) {
     }
 
     return res;
-  } catch {
+  } catch (err: any) {
+    console.error("Middleware JWT verification failed:", err?.message || err, "Token is:", token);
     // Token invalid or expired — redirect to login
     const loginUrl = req.nextUrl.clone();
     loginUrl.pathname = "/login";

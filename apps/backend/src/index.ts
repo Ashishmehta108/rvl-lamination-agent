@@ -19,6 +19,7 @@ import { getNativeDb } from "@rvl/db-mongo";
 import { tryGetBoss } from "./queue/boss.js";
 import { closeMongo } from "./db/mongo.js";
 import { closePostgres } from "./db/postgres.js";
+import { ensureProductionMetricsIndexes } from "./services/productionMetrics.js";
 
 async function main() {
   const app = Fastify({
@@ -104,6 +105,7 @@ async function main() {
   await registerMlRoutes(app as any);
   await registerEmailRoutes(app as any);
 
+  await ensureProductionMetricsIndexes();
   await startWorkers({ logger: app.log });
 
   const shutdown = async (signal: NodeJS.Signals) => {

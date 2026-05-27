@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { requireApiAuth, validateMachineAccess } from "../auth.js";
-import { getMongoClient } from "@rvl/db-mongo";
+import { getMongoClient, getNativeDb } from "@rvl/db-mongo";
 import { getPgDb, schema } from "@rvl/db-postgres";
 import { desc, eq, and, sql, gte, lt } from "drizzle-orm";
 import { newId } from "@rvl/shared";
@@ -14,6 +14,33 @@ import {
   type ProductionGranularity
 } from "../services/productionMetrics.js";
 import { verifySmtpTransport, getSmtpTransport, smtpFromAddress } from "../email/smtpTransport.js";
+
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+function istDayKey(date: Date): string {
+  return new Date(date.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+function parseRangeTime(input: string | undefined, fallbackMs: number): Date {
+  if (!input) return new Date(Date.now() - fallbackMs);
+  const value = input.trim().toLowerCase();
+  const relative = /^(\d+)(m|h|d)$/.exec(value);
+  if (relative) {
+    const amount = Number(relative[1]);
+    const unit = relative[2];
+    const multiplier = unit === "m" ? 60_000 : unit === "h" ? 3_600_000 : 86_400_000;
+    return new Date(Date.now() - amount * multiplier);
+  }
+  const parsed = new Date(input);
+  return Number.isNaN(parsed.getTime()) ? new Date(Date.now() - fallbackMs) : parsed;
+}
+
+function sampleValue(row: { valueNumber?: unknown; valueBool?: unknown; valueString?: unknown }) {
+  if (typeof row.valueNumber === "number") return row.valueNumber;
+  if (typeof row.valueBool === "boolean") return row.valueBool;
+  if (typeof row.valueString === "string") return row.valueString;
+  return null;
+}
 
 export async function registerQueryRoutes(app: FastifyInstance) {
   app.post("/debug/boss/send", async (req, reply) => {
@@ -149,6 +176,83 @@ export async function registerQueryRoutes(app: FastifyInstance) {
     return reply.send({ schema: schemaName, table, rows: (res as any).rows ?? [] });
   });
 
+  app.get("/tags/:tag/history", async (req, reply) => {
+    requireApiAuth(req);
+    const machineId = String((req.query as any)?.machineId ?? "");
+    validateMachineAccess(machineId);
+
+    const tag = decodeURIComponent(String((req.params as any)?.tag ?? "")).trim();
+    if (!tag) return reply.code(400).send({ error: "tag_required" });
+
+    const toInput = (req.query as any)?.to != null ? String((req.query as any).to) : undefined;
+    const fromInput = (req.query as any)?.from != null ? String((req.query as any).from) : "1h";
+    const to = toInput ? parseRangeTime(toInput, 0) : new Date();
+    const from = parseRangeTime(fromInput, 3_600_000);
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) {
+      return reply.code(400).send({ error: "invalid_date_range" });
+    }
+
+    const limitRaw = Number((req.query as any)?.limit ?? 500);
+    const limit = Math.min(5_000, Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 500));
+    const normalizedSlug = tag.toUpperCase();
+
+    const prisma = getMongoClient();
+    const definitions = await prisma.tagDefinition.findMany({
+      where: {
+        machineId,
+        OR: [
+          { slug: { equals: normalizedSlug } },
+          { tagId: tag },
+          { tagId: normalizedSlug }
+        ]
+      },
+      select: { tagId: true, slug: true, name: true, unit: true },
+      take: 100
+    });
+
+    const tagIds = [
+      ...new Set([
+        ...definitions.map((def: any) => String(def.tagId)),
+        tag,
+        normalizedSlug
+      ].filter(Boolean))
+    ];
+    const primaryDef = definitions.find((def: any) => def.slug === normalizedSlug) ?? definitions[0] ?? null;
+
+    const rows = await prisma.tagSample.findMany({
+      where: {
+        machineId,
+        tagId: { in: tagIds },
+        ts: { gte: from, lte: to }
+      },
+      select: { tagId: true, ts: true, valueNumber: true, valueBool: true, valueString: true, quality: true },
+      orderBy: { ts: "desc" },
+      take: limit
+    });
+
+    const samples = rows
+      .reverse()
+      .map((row: any) => ({
+        tagId: row.tagId,
+        ts: row.ts.toISOString(),
+        value: sampleValue(row),
+        quality: row.quality
+      }));
+
+    return reply.send({
+      tag: {
+        slug: primaryDef?.slug ?? normalizedSlug,
+        name: primaryDef?.name ?? tag,
+        unit: primaryDef?.unit ?? null,
+        tagIds
+      },
+      samples,
+      count: samples.length,
+      from: from.toISOString(),
+      to: to.toISOString()
+    });
+  });
+
   app.get("/tags/latest", async (req, reply) => {
     requireApiAuth(req);
     const machineId = String((req.query as any)?.machineId ?? "");
@@ -175,7 +279,19 @@ export async function registerQueryRoutes(app: FastifyInstance) {
       name: (defMap.get(item.tagId) as any)?.name || item.tagId,
     }));
 
-    return reply.send({ items: enhancedItems });
+    const nativeDb = await getNativeDb();
+    const today = istDayKey(new Date());
+    const productionToday = await nativeDb.collection<any>("ProductionDaily").findOne({
+      _id: `${machineId}:${today}`
+    });
+
+    return reply.send({
+      items: enhancedItems,
+      todayProducedMeters:
+        typeof productionToday?.meters === "number" && Number.isFinite(productionToday.meters)
+          ? Math.round(productionToday.meters * 10) / 10
+          : 0
+    });
   });
 
   app.get("/metrics/production", async (req, reply) => {
