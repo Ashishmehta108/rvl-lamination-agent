@@ -95,8 +95,9 @@ export const config = {
   ollamaReportTemperature: getEnvNum("OLLAMA_REPORT_TEMPERATURE", 0),
   ollamaReportStepTimeoutMs: getEnvNum("OLLAMA_REPORT_STEP_TIMEOUT_MS", 60_000),
 
+  /** Comma-separated report recipients; email skipped if empty */
   reportEmailTo: getEnv("REPORT_EMAIL_TO", "")
-    .split(/[\s,]+/)
+    .split(",")
     .map((s) => s.trim())
     .filter(Boolean),
 

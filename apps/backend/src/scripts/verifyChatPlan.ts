@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { ALL_TOOL_DECLARATIONS } from "../ai/index.js";
-import { SYSTEM_PROMPT } from "../ai/prompts.js";
+import { ALL_TOOL_DECLARATIONS, SYSTEM_PROMPT } from "../ai/agent.js";
 
 function main(): void {
   const toolNames = new Set(ALL_TOOL_DECLARATIONS.map((tool) => tool.name));
