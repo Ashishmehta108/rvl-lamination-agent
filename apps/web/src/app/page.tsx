@@ -34,7 +34,7 @@ const C = {
 
 export default function HomePage() {
   const { machineId, setMachineId, isGeneratingReport, triggerReport } = useAppContext();
-  const { items, alerts, reports, history, mutateReports } = useDashboard(machineId);
+  const { items, alerts, reports, history, todayProducedMeters, mutateReports } = useDashboard(machineId);
 
   const stats = useMemo(() => {
     const get = (slug: string) =>
@@ -47,6 +47,7 @@ export default function HomePage() {
       mpm:       (get("LAMINATOR_MPM")?.valueNumber ?? 0).toFixed(1),
       gsm:       (get("GSM_ENTRY")?.valueNumber     ?? 0).toFixed(1),
       runM:      (get("RUNNING_METER")?.valueNumber ?? 0).toFixed(0),
+      todayM:    todayProducedMeters === null ? "0" : todayProducedMeters.toFixed(0),
       masterPct: masterPct.toFixed(0),
       actualMpm,
       hotplateOn:     get("HOTPLATE_ENABLE")?.valueBool ?? null,
@@ -57,7 +58,7 @@ export default function HomePage() {
       logicEnabled:   get("LOGIC_ENABLE")?.valueBool ?? null,
       airPressureLow: get("AIR_PRESSURE_LOW")?.valueBool ?? null,
     };
-  }, [items]);
+  }, [items, todayProducedMeters]);
 
   const viewReport = async (runId: string) => {
     const tid = toast.loading("Preparing download...");
@@ -132,6 +133,7 @@ export default function HomePage() {
           <StatCard title="Extruder RPM" value={stats.rpm} unit="RPM" />
           <StatCard title="Line Speed" value={stats.mpm} unit="m/min" />
           <StatCard title="GSM" value={stats.gsm} unit="g/m²" />
+          <StatCard title="Today Produced" value={stats.todayM} unit="m" />
           <StatCard
             title="Open Alerts"
             value={alerts.length}

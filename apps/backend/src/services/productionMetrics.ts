@@ -24,6 +24,15 @@ const MAX_SPAN_MS: Record<ProductionGranularity, number> = {
 
 const MAX_BUCKETS_EXPLICIT = 400;
 
+export async function ensureProductionMetricsIndexes(): Promise<void> {
+  const db = await getNativeDb();
+  await Promise.all([
+    db.collection("TagDefinition").createIndex({ machineId: 1, slug: 1, updatedAt: -1 }),
+    db.collection("TagSample").createIndex({ machineId: 1, tagId: 1, ts: 1 }),
+    db.collection("ProductionDaily").createIndex({ machineId: 1, day: 1 })
+  ]);
+}
+
 function periodExpression(granularity: ProductionGranularity): Record<string, unknown> {
   if (granularity === "daily") {
     return { $dateToString: { format: "%Y-%m-%d", date: "$ts", timezone: "UTC" } };
@@ -32,6 +41,37 @@ function periodExpression(granularity: ProductionGranularity): Record<string, un
     return { $dateToString: { format: "%G-W%V", date: "$ts", timezone: "UTC" } };
   }
   return { $dateToString: { format: "%Y-%m", date: "$ts", timezone: "UTC" } };
+}
+
+function isoWeekKey(date: Date): string {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+function periodKey(date: Date, granularity: ProductionGranularity): string {
+  if (granularity === "daily") return date.toISOString().slice(0, 10);
+  if (granularity === "weekly") return isoWeekKey(date);
+  return date.toISOString().slice(0, 7);
+}
+
+function istDayKey(date: Date): string {
+  return new Date(date.getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function dayKeysBetween(from: Date, to: Date): string[] {
+  const keys: string[] = [];
+  const start = new Date(`${istDayKey(from)}T00:00:00.000Z`);
+  const endKey = istDayKey(to);
+  for (const d = start; keys.length < MAX_BUCKETS_EXPLICIT + 7; d.setUTCDate(d.getUTCDate() + 1)) {
+    const key = d.toISOString().slice(0, 10);
+    keys.push(key);
+    if (key === endKey) break;
+  }
+  return keys;
 }
 
 function msPerBucket(granularity: ProductionGranularity): number {
@@ -43,6 +83,34 @@ function msPerBucket(granularity: ProductionGranularity): number {
 function clampBuckets(n: number, granularity: ProductionGranularity): number {
   const max = granularity === "daily" ? 90 : granularity === "weekly" ? 52 : 36;
   return Math.min(max, Math.max(1, n));
+}
+
+async function resolveTagIdsBySlug(db: any, machineId: string, slugs: readonly string[]): Promise<{
+  tagIdsBySlug: Map<string, string[]>;
+  slugByTagId: Map<string, string>;
+}> {
+  const defs = (await db.collection("TagDefinition")
+    .find({ machineId, slug: { $in: [...slugs] } })
+    .project({ _id: 0, tagId: 1, slug: 1 })
+    .toArray()) as Array<{ tagId: string; slug: string }>;
+
+  const tagIdsBySlug = new Map<string, string[]>();
+  const slugByTagId = new Map<string, string>();
+
+  for (const slug of slugs) {
+    tagIdsBySlug.set(slug, [slug]);
+    slugByTagId.set(slug, slug);
+  }
+
+  for (const def of defs) {
+    if (!def?.tagId || !def?.slug) continue;
+    const ids = tagIdsBySlug.get(def.slug) ?? [];
+    if (!ids.includes(def.tagId)) ids.push(def.tagId);
+    tagIdsBySlug.set(def.slug, ids);
+    slugByTagId.set(def.tagId, def.slug);
+  }
+
+  return { tagIdsBySlug, slugByTagId };
 }
 
 /** Resolve human slug from TagDefinition (handles legacy internal tagIds). */
@@ -130,7 +198,8 @@ function resolveTimeWindow(args: {
 }
 
 /**
- * Aggregates TagSample rows into time buckets. RUNNING_METER uses max-min per bucket as production proxy.
+ * Aggregates TagSample rows into time buckets. RUNNING_METER sums positive deltas,
+ * treating counter drops as roll resets so daily production is not undercounted.
  * Resolves slugs via TagDefinition so samples keyed by internal tagId still match.
  */
 export async function aggregateProductionMetrics(args: {
@@ -150,20 +219,25 @@ export async function aggregateProductionMetrics(args: {
   const db = await getNativeDb();
   const col = db.collection("TagSample");
   const periodExpr = periodExpression(args.granularity);
+  const { tagIdsBySlug, slugByTagId } = await resolveTagIdsBySlug(db, args.machineId, TRACKED_SLUGS);
+  const avgTagIds = [
+    ...(tagIdsBySlug.get("EXTRUDER_RPM") ?? []),
+    ...(tagIdsBySlug.get("LAMINATOR_MPM") ?? []),
+    ...(tagIdsBySlug.get("GSM_ENTRY") ?? [])
+  ];
 
-  const pipeline: object[] = [
+  const averagesPipeline: object[] = [
     {
       $match: {
         machineId: args.machineId,
-        ts: { $gte: from, $lte: to }
+        tagId: { $in: avgTagIds },
+        ts: { $gte: from, $lte: to },
+        valueNumber: { $exists: true, $ne: null }
       }
     },
-    ...slugStages(),
     {
       $group: {
-        _id: { period: periodExpr, metricSlug: "$metricSlug" },
-        minV: { $min: "$valueNumber" },
-        maxV: { $max: "$valueNumber" },
+        _id: { period: periodExpr, tagId: "$tagId" },
         avgV: { $avg: "$valueNumber" },
         cnt: { $sum: 1 }
       }
@@ -171,18 +245,20 @@ export async function aggregateProductionMetrics(args: {
     { $sort: { "_id.period": 1 as const } }
   ];
 
-  const rows = (await col.aggregate(pipeline).toArray()) as Array<{
-    _id: { period: string; metricSlug: string };
-    minV: number;
-    maxV: number;
+  const rows = (await col.aggregate(averagesPipeline).toArray()) as Array<{
+    _id: { period: string; tagId: string };
     avgV: number;
     cnt: number;
   }>;
+  const productionRows = (await db.collection("ProductionDaily")
+    .find({ machineId: args.machineId, day: { $in: dayKeysBetween(from, to) } })
+    .project({ _id: 0, day: 1, meters: 1 })
+    .toArray()) as Array<{ day: string; meters: number }>;
 
   const byPeriod = new Map<
     string,
     {
-      RUNNING_METER?: { min: number; max: number; cnt: number };
+      RUNNING_METER?: { meters: number; cnt: number };
       EXTRUDER_RPM?: { avg: number; cnt: number };
       LAMINATOR_MPM?: { avg: number; cnt: number };
       GSM_ENTRY?: { avg: number; cnt: number };
@@ -191,22 +267,35 @@ export async function aggregateProductionMetrics(args: {
 
   for (const r of rows) {
     const p = r._id.period;
-    const tag = r._id.metricSlug;
+    const tag = slugByTagId.get(r._id.tagId);
     if (!p || !tag) continue;
     let m = byPeriod.get(p);
     if (!m) {
       m = {};
       byPeriod.set(p, m);
     }
-    if (tag === "RUNNING_METER") {
-      m.RUNNING_METER = { min: r.minV, max: r.maxV, cnt: r.cnt };
-    } else if (tag === "EXTRUDER_RPM") {
+    if (tag === "EXTRUDER_RPM") {
       m.EXTRUDER_RPM = { avg: r.avgV, cnt: r.cnt };
     } else if (tag === "LAMINATOR_MPM") {
       m.LAMINATOR_MPM = { avg: r.avgV, cnt: r.cnt };
     } else if (tag === "GSM_ENTRY") {
       m.GSM_ENTRY = { avg: r.avgV, cnt: r.cnt };
     }
+  }
+
+  for (const row of productionRows) {
+    if (!row.day || typeof row.meters !== "number" || !Number.isFinite(row.meters)) continue;
+    const p = args.granularity === "daily"
+      ? row.day
+      : periodKey(new Date(`${row.day}T00:00:00.000Z`), args.granularity);
+    let m = byPeriod.get(p);
+    if (!m) {
+      m = {};
+      byPeriod.set(p, m);
+    }
+    if (!m.RUNNING_METER) m.RUNNING_METER = { meters: 0, cnt: 0 };
+    m.RUNNING_METER.cnt += 1;
+    m.RUNNING_METER.meters += row.meters;
   }
 
   const sortedKeys = [...byPeriod.keys()].sort();
@@ -216,7 +305,7 @@ export async function aggregateProductionMetrics(args: {
     const m = byPeriod.get(key)!;
     let runningMeters: number | null = null;
     if (m.RUNNING_METER) {
-      const d = m.RUNNING_METER.max - m.RUNNING_METER.min;
+      const d = m.RUNNING_METER.meters;
       runningMeters = Number.isFinite(d) ? Math.max(0, Math.round(d * 10) / 10) : null;
     }
 

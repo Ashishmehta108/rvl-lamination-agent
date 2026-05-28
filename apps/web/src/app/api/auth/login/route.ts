@@ -28,12 +28,12 @@ export async function POST(req: NextRequest) {
       role: string;
     };
 
-    const response = NextResponse.json({ ok: true, userId, tenantId, role });
+    const isSecure = req.nextUrl.protocol === "https:" || req.headers.get("x-forwarded-proto") === "https";
 
-    // Store JWT in an httpOnly cookie so JS can't read it
+    const response = NextResponse.json({ ok: true, userId, tenantId, role });
     response.cookies.set("rvl_token", token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: isSecure,
       sameSite: "lax",
       path: "/",
       maxAge: 60 * 60 * 8 // 8 hours

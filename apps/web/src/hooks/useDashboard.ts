@@ -37,7 +37,7 @@ export function useDashboard(machineId: string) {
 
   const { data: tagsData, error: tagsError, mutate: mutateTags } = useSWR(
     [`/tags/latest`, machineId],
-    () => api.get<{ items: TagLatest[] }>(`/tags/latest`, { machineId }),
+    () => api.get<{ items: TagLatest[]; todayProducedMeters?: number }>(`/tags/latest`, { machineId }),
     { refreshInterval: 2000 }
   );
 
@@ -79,11 +79,14 @@ export function useDashboard(machineId: string) {
     { refreshInterval: 10000 }
   );
 
+  const todayProducedMeters = tagsData?.todayProducedMeters ?? 0;
+
   return {
     items: tagsData?.items ?? [],
     alerts: alertsData?.items ?? [],
     reports: reportsData?.items ?? [],
     history,
+    todayProducedMeters,
     isLoading: !tagsData && !tagsError,
     isError: !!(tagsError || alertsError || reportsError),
     mutateTags,

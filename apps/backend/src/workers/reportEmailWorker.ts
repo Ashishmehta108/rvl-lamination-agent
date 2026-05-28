@@ -65,19 +65,17 @@ export async function registerReportEmailWorker(boss: PgBoss, logger: Logger) {
         }
 
         const html = await fs.readFile(artifact.uri, "utf8");
-        const windowLabel = `${run.windowStart.toISOString().slice(0, 10)} → ${run.windowEnd.toISOString().slice(0, 10)}`;
-        
-        const metrics = (run.metrics as any) || {};
-        const buildTimeMs = metrics.stepTimings?.total;
-        const buildSuffix = buildTimeMs ? ` (built in ${(buildTimeMs / 1000).toFixed(1)}s)` : "";
-        const subject = `RVL production report — ${run.machineId} — ${windowLabel}${buildSuffix}`;
+        const dateFmt = (d: Date) => d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" });
+        const startStr = dateFmt(run.windowStart);
+        const endStr = dateFmt(run.windowEnd);
+        const subject = `RVL Lamination Daily Production Report [${run.machineId}] - ${startStr} to ${endStr}`;
 
         await transport.sendMail({
           from: smtpFromAddress(smtpFallbackUser()),
           to: config.reportEmailTo.join(", "),
           subject,
           html,
-          text: `Report for machine ${run.machineId} (${windowLabel}). Open the HTML part of this message for the full report.`
+          text: `Report for machine ${run.machineId} (${startStr} to ${endStr}). Open the HTML part of this message for the full report.`
         });
 
         await mergeEmailMetrics({
