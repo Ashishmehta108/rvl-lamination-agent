@@ -9,7 +9,7 @@ import { newId } from "@rvl/shared";
 import { getMongoClient } from "@rvl/db-mongo";
 import { config } from "../config.js";
 import { Jobs } from "./jobs.js";
-import { providerChatOnce } from "../ai/gemini.js";
+
 import {
   getPromptDescriptor,
   REPORT_OVERVIEW_PROMPT_ID,
@@ -20,6 +20,7 @@ import {
   REPORT_RISKS_PROMPT_ID,
   REPORT_RECOMMENDATIONS_PROMPT_ID,
 } from "../services/promptRegistry.js";
+import { bedrockChatOnce, type BedrockChatMessage } from "src/ai/bedrock.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,24 @@ type ReportRunPayload = {
   windowStart: string;
   windowEnd: string;
 };
+
+
+export async function providerChatOnce(args: {
+  messages: BedrockChatMessage[];
+  model?: string;
+  temperature?: number;
+  timeoutMs?: number;
+}): Promise<string> {
+
+  return bedrockChatOnce({
+    messages: args.messages,
+    model: args.model ?? config.bedrockReportModelId,
+    temperature: args.temperature,
+    timeoutMs: args.timeoutMs
+  });
+
+
+}
 
 type TagSnapshotRow = {
   tagId: string;
@@ -258,21 +277,21 @@ async function buildTrendData(machineId: string, windowStart: Date, windowEnd: D
       const a = acc.get(def.tagId)!;
       if (a.n === 0) return null;
 
-      const avg    = +a.mean.toFixed(2);
+      const avg = +a.mean.toFixed(2);
       const stdDev = +(Math.sqrt(a.n > 1 ? a.M2 / a.n : 0)).toFixed(2);
-      const min    = +a.min.toFixed(2);
-      const max    = +a.max.toFixed(2);
+      const min = +a.min.toFixed(2);
+      const max = +a.max.toFixed(2);
 
       // Late average from the circular buffer
       let lateSum = 0;
       for (let i = 0; i < a.lateBufN; i++) lateSum += a.lateBuf[i]!;
       const earlyAvg = a.earlyN > 0 ? a.earlySum / a.earlyN : avg;
-      const lateAvg  = a.lateBufN > 0 ? lateSum / a.lateBufN : avg;
+      const lateAvg = a.lateBufN > 0 ? lateSum / a.lateBufN : avg;
 
       const trend: "rising" | "falling" | "stable" =
-        a.n < 6                       ? "stable"  :
-        lateAvg > earlyAvg * 1.05     ? "rising"  :
-        lateAvg < earlyAvg * 0.95     ? "falling" : "stable";
+        a.n < 6 ? "stable" :
+          lateAvg > earlyAvg * 1.05 ? "rising" :
+            lateAvg < earlyAvg * 0.95 ? "falling" : "stable";
 
       const u = def.unit ? ` ${def.unit}` : "";
       // summary is the ONLY field that reaches the LLM — raw arrays never in prompt

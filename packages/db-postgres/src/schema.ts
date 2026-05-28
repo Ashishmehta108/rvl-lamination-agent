@@ -255,6 +255,20 @@ export const chatMessages = pgTable(
   })
 );
 
+
+
+export const LLMTrace=pgTable("llm_trace",{
+  id:text("trace_id").primaryKey(),
+  trace:jsonb("trace").notNull(),
+  createdAt:timestamp("created_at", {withTimezone: true}).notNull().defaultNow(),
+  input_tokens:integer("input_tokens").notNull(),
+  output_tokens:integer("output_tokens").notNull(),
+  duration_ms:integer("duration_ms").notNull(),
+
+
+})
+
+
 export const alertRulesRelations = relations(alertRules, ({ many }) => ({
   events: many(alertEvents)
 }));
@@ -310,4 +324,5 @@ export const chatSessionsRelations = relations(chatSessions, ({ one, many }) => 
 export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
   session: one(chatSessions, { fields: [chatMessages.sessionId], references: [chatSessions.id] })
 }));
+
 

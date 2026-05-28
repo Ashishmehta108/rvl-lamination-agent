@@ -23,6 +23,8 @@ function readSmtpConfig(): SmtpConfigState {
     };
   }
 
+  
+
   if (user === SMTP_PLACEHOLDERS.user || pass === SMTP_PLACEHOLDERS.pass) {
     return {
       ok: false,

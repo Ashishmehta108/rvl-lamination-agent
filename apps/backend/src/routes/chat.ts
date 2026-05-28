@@ -14,7 +14,7 @@ import { and, desc, eq, lt, sql } from "drizzle-orm";
 import { newId } from "@rvl/shared";
 import { requireAuth } from "./auth.js";
 import { validateMachineAccess } from "../auth.js";
-import { runAgent, type AgentTrace } from "../ai/agent.js";
+import { runAgent, type AgentTrace } from "../ai/index.js";
 import { getPostgresDb, schema } from "../db/postgres.js";
 import { migrateChatTables } from "../db/migrations/chat.js";
 import {
